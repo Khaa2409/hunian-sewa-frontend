@@ -61,9 +61,10 @@
   /** @param {any} contract */
   function formatContractCode(contract) {
     if (!contract) return "-";
-    if (contract.contract_number) return String(contract.contract_number);
-    if (contract.id !== null && contract.id !== undefined)
-      return `KTR-${contract.id}`;
+    const rawId = contract.id ?? contract;
+    if (rawId !== null && rawId !== undefined) {
+      return `ID ${rawId}`;
+    }
     return "-";
   }
 
@@ -123,14 +124,14 @@
   }
 
   /**
+   * Extract total dari respons backend (baca meta.total)
    * @param {any} res
    * @param {number} [fallbackLen=0]
    */
   function extractTotal(res, fallbackLen = 0) {
     if (!res || typeof res !== "object") return fallbackLen;
+    if (res.meta && typeof res.meta.total === "number") return res.meta.total;
     if (typeof res.total === "number") return res.total;
-    if (res.pagination && typeof res.pagination.total === "number")
-      return res.pagination.total;
     if (Array.isArray(res.data)) return res.data.length;
     return fallbackLen;
   }
@@ -201,7 +202,7 @@
       const [allRes, pendingRes, activeRes, completedRes, terminatedRes] =
         await Promise.all([
           fetchContracts({
-            status: "all",
+            status: "",
             q: searchQuery,
             page: 1,
             limit: 1,
@@ -249,9 +250,10 @@
     isLoading = true;
     errorMessage = "";
     try {
+      const apiStatusParam = selectedStatus === "all" ? "" : selectedStatus;
       /** @type {any} */
       const res = await fetchContracts({
-        status: selectedStatus,
+        status: apiStatusParam,
         q: searchQuery,
         page: currentPage,
         limit: perPage,
@@ -262,20 +264,22 @@
 
       const totalCount = extractTotal(res, list.length);
       const totalPages =
+        res?.meta?.total_pages ||
         res?.pagination?.total_pages ||
-        res?.total_pages ||
         Math.max(1, Math.ceil(totalCount / perPage));
 
       paginationMeta = {
         total: totalCount,
-        page: res?.pagination?.page || currentPage,
+        page: res?.meta?.page || currentPage,
         total_pages: totalPages,
       };
 
       await refreshTabCounts();
     } catch (/** @type {any} */ err) {
       errorMessage =
-        err?.message || "Gagal mengambil daftar kontrak sewa dari database.";
+        err?.message ||
+        err?.data?.pesan ||
+        "Gagal mengambil daftar kontrak sewa dari database.";
       contracts = [];
     } finally {
       isLoading = false;
@@ -310,17 +314,12 @@
       selectedContract = {
         ...(typeof item === "object" && item !== null ? item : {}),
         ...detailData,
-        contract_number:
-          detailData?.contract_number ||
-          (typeof item === "object" && item !== null
-            ? item.contract_number
-            : null) ||
-          (detailData?.id || id ? `KTR-${detailData?.id || id}` : "-"),
       };
       paymentPage = 1;
       viewMode = "detail";
     } catch (/** @type {any} */ err) {
-      errorMessage = err?.message || "Gagal memuat detail kontrak.";
+      errorMessage =
+        err?.message || err?.data?.pesan || "Gagal memuat detail kontrak.";
     } finally {
       isLoading = false;
     }
@@ -387,7 +386,8 @@
       );
       await loadContractsList();
     } catch (/** @type {any} */ err) {
-      errorMessage = err?.message || "Gagal membuat kontrak sewa.";
+      errorMessage =
+        err?.data?.pesan || err?.message || "Gagal membuat kontrak sewa.";
     } finally {
       isSubmitting = false;
     }
@@ -418,7 +418,8 @@
         await loadContractsList();
       }
     } catch (/** @type {any} */ err) {
-      errorMessage = err?.message || "Gagal memperpanjang kontrak.";
+      errorMessage =
+        err?.data?.pesan || err?.message || "Gagal memperpanjang kontrak.";
     } finally {
       isSubmitting = false;
     }
@@ -443,7 +444,8 @@
         await loadContractsList();
       }
     } catch (/** @type {any} */ err) {
-      errorMessage = err?.message || "Gagal mengakhiri kontrak.";
+      errorMessage =
+        err?.data?.pesan || err?.message || "Gagal mengakhiri kontrak.";
     } finally {
       isSubmitting = false;
     }
@@ -553,7 +555,7 @@
   {/if}
 
   {#if viewMode === "detail" && selectedContract}
-    <!-- VIEW DETAIL KONTRAK SEWA (DESKTOP & MOBILE SATU STRUKTUR) -->
+    <!-- VIEW DETAIL KONTRAK SEWA -->
     <div
       class="detail-page-wrap"
       in:fly={{ y: 16, duration: 250, easing: cubicOut }}
@@ -707,9 +709,13 @@
                     {#each pagedPayments as pay (pay.id || pay.invoice_number)}
                       <tr>
                         <td>{pay.period_label || pay.period || "-"}</td>
-                        <td>{pay.amount_rupiah || formatRupiah(pay.amount)}</td>
+                        <td
+                          >{pay.amount_rupiah ||
+                            formatRupiah(pay.amount || pay.gross_amount)}</td
+                        >
                         <td class="cell-muted-date"
-                          >{formatDateId(pay.paid_at || pay.payment_date)}</td
+                          >{pay.paid_at_wib ||
+                            formatDateId(pay.paid_at || pay.payment_date)}</td
                         >
                         <td>{pay.payment_method || pay.method || "-"}</td>
                         <td
@@ -1111,7 +1117,7 @@
             class="desktop-search-input"
             bind:value={searchQuery}
             placeholder={isMobileViewport
-              ? "Cari kode kontrak, kamar, atau penyewa..."
+              ? "Cari kamar atau penyewa..."
               : "Cari penyewa atau nomor kamar"}
             aria-label="Cari penyewa atau nomor kamar"
           />
@@ -2575,7 +2581,6 @@
       border-radius: 10px;
     }
 
-    /* Ringkasan Kontrak di mobile tetap 2 kolom kiri-kanan seperti desktop */
     .summary-two-col {
       grid-template-columns: repeat(2, minmax(0, 1fr));
       gap: 10px 12px;

@@ -22,7 +22,7 @@
    * @property {string} billPeriod
    * @property {string} amount
    * @property {string} paidDate
-   * @property {'paid' | 'pending' | 'late'} status
+   * @property {'paid' | 'partial' | 'pending' | 'late'} status
    * @property {string} statusLabel
    */
 
@@ -56,14 +56,12 @@
   let selectedPeriod = $state("2026-11");
   let loading = $state(true);
   let hasError = $state(false);
+  let errorMessage = $state("");
   let currentPage = $state(1);
   const pageSize = 10;
 
   /** @type {PeriodOption[]} */
-  let periodOptions = $state([
-    { value: "2026-11", label: "November 2026" },
-    { value: "2026-10", label: "Oktober 2026" },
-  ]);
+  let periodOptions = $state([]);
 
   /** @type {FinanceReportViewModel | null} */
   let reportData = $state(null);
@@ -100,60 +98,48 @@
   }
 
   /**
-   * @param {any} dateStr
+   * @param {string} periodKey
    * @returns {string}
    */
-  function formatShortDate(dateStr) {
-    if (!dateStr || dateStr === "–" || dateStr === "-") return "–";
-    const d = new Date(dateStr);
-    if (Number.isNaN(d.getTime())) return String(dateStr);
-    return d.toLocaleDateString("id-ID", {
-      day: "2-digit",
-      month: "short",
-      year: "numeric",
-    });
+  function formatPeriodLabel(periodKey) {
+    if (!periodKey) return "";
+    const parts = periodKey.split("-");
+    if (parts.length === 2) {
+      const year = parts[0];
+      const monthIndex = parseInt(parts[1], 10) - 1;
+      const months = [
+        "Januari",
+        "Februari",
+        "Maret",
+        "April",
+        "Mei",
+        "Juni",
+        "Juli",
+        "Agustus",
+        "September",
+        "Oktober",
+        "November",
+        "Desember",
+      ];
+      if (monthIndex >= 0 && monthIndex < 12) {
+        return `${months[monthIndex]} ${year}`;
+      }
+    }
+    return periodKey;
   }
 
   /**
-   * @param {any} rawStatus
-   * @param {any} rawLabel
-   * @returns {{ status: 'paid' | 'pending' | 'late', label: string }}
+   * @param {any} room
+   * @returns {{ status: 'paid' | 'partial' | 'pending' | 'late', label: string }}
    */
-  function normalizeStatus(rawStatus, rawLabel) {
-    const val = String(rawStatus || rawLabel || "").toLowerCase();
-    if (
-      val === "paid" ||
-      val === "lunas" ||
-      val === "settlement" ||
-      val === "success"
-    ) {
-      return { status: "paid", label: rawLabel || "Lunas" };
+  function mapFinanceStatus(room) {
+    if (room?.status === "paid") return { status: "paid", label: "Lunas" };
+    if (room?.status === "partial")
+      return { status: "partial", label: "Sebagian" };
+    if (toNumber(room?.overdue_days, 0) > 0) {
+      return { status: "late", label: "Terlambat" };
     }
-    if (
-      val.includes("terlambat") ||
-      val === "late" ||
-      val === "overdue" ||
-      val === "expire"
-    ) {
-      return { status: "late", label: rawLabel || "Terlambat" };
-    }
-    return { status: "pending", label: rawLabel || "Menunggu Pembayaran" };
-  }
-
-  /**
-   * @param {any} err
-   * @returns {boolean}
-   */
-  function isConnectionFailure(err) {
-    const msg = String(err?.message || "").toLowerCase();
-    return (
-      msg.includes("failed to fetch") ||
-      msg.includes("networkerror") ||
-      msg.includes("network request failed") ||
-      msg.includes("load failed") ||
-      msg.includes("timeout") ||
-      msg.includes("timed out")
-    );
+    return { status: "pending", label: "Menunggu Pembayaran" };
   }
 
   /**
@@ -162,168 +148,105 @@
    * @returns {FinanceReportViewModel | null}
    */
   function normalizeReportPayload(payload, periodKey) {
-    const root =
-      payload?.data && typeof payload.data === "object"
-        ? payload.data
-        : payload;
+    const root = payload?.data;
     if (!root || typeof root !== "object") return null;
 
-    if (Array.isArray(root.periods) && root.periods.length > 0) {
-      /** @type {PeriodOption[]} */
-      periodOptions = root.periods.map((/** @type {any} */ p) =>
-        typeof p === "string"
-          ? { value: p, label: p }
-          : { value: p.value || p.period, label: p.label || p.name || p.value },
-      );
+    const monthlyArr = Array.isArray(root.monthly) ? root.monthly : [];
+    if (monthlyArr.length > 0) {
+      periodOptions = monthlyArr
+        .filter((/** @type {any} */ m) => m?.periode)
+        .map((/** @type {any} */ m) => ({
+          value: String(m.periode),
+          label: formatPeriodLabel(String(m.periode)),
+        }));
     }
 
-    const summary = root.summary || root.totals || root;
-    const paidCount = toNumber(summary.paid_count ?? summary.lunas_count, 0);
-    const totalBills = toNumber(
-      summary.total_invoices ?? summary.total_count ?? summary.total,
-      0,
-    );
-    const unpaidCount = toNumber(
-      summary.unpaid_count ?? summary.belum_lunas_count,
-      Math.max(0, totalBills - paidCount),
-    );
-    const lateCount = toNumber(summary.late_count ?? summary.overdue_count, 0);
-    const roomTotalCount = toNumber(
-      summary.total_rooms ?? summary.rooms_count ?? totalBills,
-      totalBills,
-    );
+    const totals = root.totals || {};
+    const invoiceCount = toNumber(totals.invoice_count, 0);
+    const paidCount = toNumber(totals.paid_count, 0);
+    const overdueCount = toNumber(totals.overdue_count, 0);
+    const unpaidCount = Math.max(0, invoiceCount - paidCount);
 
-    const rawPercent =
-      summary.collection_percentage ??
-      summary.paid_percentage ??
-      (totalBills > 0 ? (paidCount / totalBills) * 100 : 0);
-    const pctNum = Math.min(100, Math.max(0, Number(rawPercent) || 0));
+    const pctNum = Math.min(100, Math.max(0, toNumber(totals.percentage, 0)));
     const pctFormattedId = Number.isInteger(pctNum)
       ? `${pctNum}%`
       : `${pctNum.toFixed(1).replace(".", ",")}%`;
 
-    const totalReceivedNum = toNumber(
-      summary.total_received ?? summary.paid_amount,
-      0,
-    );
-    const unpaidAmountNum = toNumber(
-      summary.unpaid_amount ?? summary.total_unpaid,
-      0,
-    );
-    const targetAmountNum = toNumber(
-      summary.target_amount ?? summary.expected_amount,
-      totalReceivedNum + unpaidAmountNum,
-    );
+    const activePeriode = String(root.periode || periodKey);
+    const periodLabelText = formatPeriodLabel(activePeriode);
 
-    const rawRooms = Array.isArray(root.rooms)
-      ? root.rooms
-      : Array.isArray(root.items)
-        ? root.items
-        : Array.isArray(root.invoices)
-          ? root.invoices
-          : Array.isArray(root.payments)
-            ? root.payments
-            : [];
-
-    const periodLabelText =
-      root.period_label ||
-      root.label ||
-      periodOptions.find((p) => p.value === periodKey)?.label ||
-      periodKey;
-
+    const rawRooms = Array.isArray(root.rooms) ? root.rooms : [];
     /** @type {FinanceRoomItem[]} */
     const rooms = rawRooms.map(
       (/** @type {any} */ r, /** @type {number} */ idx) => {
-        const st = normalizeStatus(r.status, r.status_label);
-        const roomCode = r.room || r.room_number || r.room?.room_number || "-";
-        const tenantName = r.tenant || r.tenant_name || r.tenant?.name || "-";
-        const pText = r.period || r.period_label || periodLabelText;
+        const st = mapFinanceStatus(r);
+        const roomCode = r.room_number || "-";
+        const tenantName = r.tenant_name || "-";
+        const paidDateDisplay = r.paid_at_wib || r.paid_at || "—";
         return {
-          id: r.id ?? idx + 1,
+          id: `${roomCode}-${idx + 1}`,
           room: roomCode,
           tenant: tenantName,
           roomName:
-            r.room_title ||
-            (tenantName !== "-"
+            tenantName !== "-"
               ? `Kamar ${roomCode} · ${tenantName}`
-              : `Kamar ${roomCode}`),
-          period: pText,
-          billPeriod: r.bill_period || `Tagihan ${pText}`,
-          amount:
-            r.amount_rupiah ||
-            r.gross_amount_rupiah ||
-            formatRupiah(r.amount ?? r.gross_amount ?? 0),
-          paidDate: formatShortDate(r.paid_at || r.payment_date || r.paidDate),
+              : `Kamar ${roomCode}`,
+          period: periodLabelText,
+          billPeriod: `Tagihan ${periodLabelText}`,
+          amount: r.billed_rupiah || formatRupiah(r.billed),
+          paidDate: paidDateDisplay,
           status: st.status,
           statusLabel: st.label,
         };
       },
     );
 
-    const rawTrend = Array.isArray(root.trend)
-      ? root.trend
-      : Array.isArray(root.monthly_trend)
-        ? root.monthly_trend
-        : [];
-
-    const maxTrendNum = Math.max(
+    const maxPaidNum = Math.max(
       1,
-      ...rawTrend.map((/** @type {any} */ t) =>
-        toNumber(t.value ?? t.amount ?? t.total, 0),
-      ),
+      ...monthlyArr.map((/** @type {any} */ m) => toNumber(m.paid, 0)),
     );
 
     /** @type {FinanceTrendItem[]} */
-    const trend = rawTrend.map(
-      (/** @type {any} */ t, /** @type {number} */ idx) => {
-        const numVal = toNumber(t.value ?? t.amount ?? t.total, 0);
+    const trend = monthlyArr.map(
+      (/** @type {any} */ m, /** @type {number} */ idx) => {
+        const paidNum = toNumber(m.paid, 0);
+        const inMillions = paidNum / 1_000_000;
         const millionsLabel =
-          t.value_label ||
-          t.valueLabel ||
-          (numVal >= 1000000
-            ? (numVal / 1000000).toFixed(1).replace(".", ",")
-            : String(numVal));
-        const ratio = numVal / maxTrendNum;
+          paidNum > 0
+            ? Number.isInteger(inMillions)
+              ? String(inMillions)
+              : inMillions.toFixed(1).replace(".", ",")
+            : "0";
         const heightPct =
-          numVal > 0
-            ? Math.max(58, Math.min(100, Math.round(55 + ratio * 45)))
-            : 18;
+          paidNum > 0
+            ? Math.max(12, Math.round((paidNum / maxPaidNum) * 100))
+            : 0;
         return {
-          month: t.month || t.label || `B${idx + 1}`,
+          month:
+            formatPeriodLabel(String(m.periode || "")).split(" ")[0] ||
+            `B${idx + 1}`,
           valueLabel: millionsLabel,
           heightPct,
-          active: Boolean(t.active ?? idx === rawTrend.length - 1),
+          active: String(m.periode) === activePeriode,
         };
       },
     );
 
     return {
-      value: periodKey,
+      value: activePeriode,
       label: periodLabelText,
-      totalReceived:
-        summary.total_received_rupiah || formatRupiah(totalReceivedNum),
-      receivedNote: summary.received_note || `dari ${paidCount} tagihan lunas`,
-      unpaidAmount:
-        summary.unpaid_amount_rupiah || formatRupiah(unpaidAmountNum),
-      unpaidNote:
-        summary.unpaid_note ||
-        `${unpaidCount} Tagihan${lateCount > 0 ? `, ${lateCount} di antaranya terlambat` : ""}`,
-      targetAmountText:
-        summary.target_amount_rupiah ||
-        `dari target ${formatRupiah(targetAmountNum)} bulan ini`,
+      totalReceived: totals.paid_rupiah || formatRupiah(totals.paid),
+      receivedNote: `dari ${paidCount} tagihan lunas`,
+      unpaidAmount: totals.unpaid_rupiah || formatRupiah(totals.unpaid),
+      unpaidNote: `${unpaidCount} tagihan, ${overdueCount} terlambat`,
+      targetAmountText: totals.billed_rupiah || formatRupiah(totals.billed),
       collectionPercent: pctFormattedId,
-      collectionMobileBadge:
-        summary.mobile_collection_label ||
-        `${pctFormattedId} (${paidCount}/${roomTotalCount || totalBills} Kamar)`,
-      collectionDetail:
-        summary.collection_detail || `${paidCount} dari ${totalBills} Tagihan`,
+      collectionMobileBadge: `${pctFormattedId} (${paidCount}/${invoiceCount} Tagihan)`,
+      collectionDetail: `${paidCount} dari ${invoiceCount} Tagihan`,
       progressPercent: pctNum,
-      trendUnit: root.trend_unit || "juta rupiah",
+      trendUnit: "juta rupiah",
       trend,
-      totalEntriesCount: toNumber(
-        root.total_entries ?? root.meta?.total,
-        rooms.length,
-      ),
+      totalEntriesCount: rooms.length,
       rooms,
     };
   }
@@ -335,14 +258,14 @@
         value: selectedPeriod,
         label:
           periodOptions.find((p) => p.value === selectedPeriod)?.label ||
-          selectedPeriod,
+          formatPeriodLabel(selectedPeriod),
         totalReceived: "Rp 0",
         receivedNote: "dari 0 tagihan lunas",
         unpaidAmount: "Rp 0",
-        unpaidNote: "0 tagihan",
+        unpaidNote: "0 tagihan, 0 terlambat",
         targetAmountText: "dari target Rp 0 bulan ini",
         collectionPercent: "0%",
-        collectionMobileBadge: "0% (0/0 Kamar)",
+        collectionMobileBadge: "0% (0/0 Tagihan)",
         collectionDetail: "0 dari 0 Tagihan",
         progressPercent: 0,
         trendUnit: "juta rupiah",
@@ -384,34 +307,27 @@
   async function fetchFinanceReport(periodVal) {
     loading = true;
     hasError = false;
+    errorMessage = "";
     reportData = null;
 
-    const endpoints = [
-      `/api/finance/report?period=${encodeURIComponent(periodVal)}`,
-      `/api/owner/finance?period=${encodeURIComponent(periodVal)}`,
-    ];
-
-    let connectionFailed = false;
-
-    for (const url of endpoints) {
-      try {
-        const res = await apiRequest(url);
-        const normalized = normalizeReportPayload(res, periodVal);
-        if (normalized) {
-          reportData = normalized;
-          hasError = false;
-          loading = false;
-          return;
-        }
-      } catch (/** @type {any} */ err) {
-        if (isConnectionFailure(err)) {
-          connectionFailed = true;
-        }
+    try {
+      const res = await apiRequest(
+        `/api/reports/financial?periode=${encodeURIComponent(periodVal)}`,
+      );
+      const normalized = normalizeReportPayload(res, periodVal);
+      if (!normalized) {
+        throw new Error("Format respons laporan keuangan tidak valid.");
       }
+      reportData = normalized;
+    } catch (/** @type {any} */ err) {
+      hasError = true;
+      errorMessage =
+        err?.data?.pesan ||
+        err?.message ||
+        "Data penerimaan tidak dapat diambil. Periksa koneksi lalu coba lagi.";
+    } finally {
+      loading = false;
     }
-
-    hasError = connectionFailed;
-    loading = false;
   }
 
   function handlePeriodChange() {
@@ -549,8 +465,8 @@
           </div>
           <h2 class="desktop-error-title">Gagal memuat laporan</h2>
           <p class="desktop-error-desc">
-            Data penerimaan tidak dapat diambil. Periksa koneksi internet lalu
-            coba lagi. Tidak ada data yang berubah.
+            {errorMessage ||
+              "Data penerimaan tidak dapat diambil. Periksa koneksi internet lalu coba lagi. Tidak ada data yang berubah."}
           </p>
         </section>
 
@@ -598,8 +514,8 @@
           </div>
           <h2 class="mobile-error-title">Gagal memuat data keuangan</h2>
           <p class="mobile-error-desc">
-            Terjadi gangguan saat menghubungkan ke server catatan transaksi.
-            Silakan coba beberapa saat lagi.
+            {errorMessage ||
+              "Terjadi gangguan saat menghubungkan ke server catatan transaksi. Silakan coba beberapa saat lagi."}
           </p>
         </section>
 
@@ -638,7 +554,7 @@
         </section>
       </div>
 
-      <!-- MOBILE SUMMARY CARDS (DISAMAKAN: PROGRES PELUNASAN) -->
+      <!-- MOBILE SUMMARY CARDS -->
       <div class="mobile-only mobile-summary-stack" in:fade={{ duration: 160 }}>
         <section class="mobile-kpi-card" aria-label="Total Diterima">
           <span class="mobile-kpi-lbl">Total Diterima</span>
@@ -1257,7 +1173,8 @@
     color: #15803d;
   }
 
-  .status-pill.pending {
+  .status-pill.pending,
+  .status-pill.partial {
     background-color: #fef3c7;
     color: #b45309;
   }

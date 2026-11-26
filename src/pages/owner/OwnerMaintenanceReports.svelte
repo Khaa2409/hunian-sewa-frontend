@@ -1,5 +1,5 @@
 <script>
-  import { onMount } from "svelte";
+  import { onMount, onDestroy } from "svelte";
   import { fade, fly, scale } from "svelte/transition";
   import { cubicOut } from "svelte/easing";
   import DashboardLayout from "../../layouts/DashboardLayout.svelte";
@@ -53,6 +53,10 @@
   let detailLoading = $state(false);
   let detailError = $state("");
   let isPhotoModalOpen = $state(false);
+  let photoObjectUrl = $state("");
+  let photoBlobLoading = $state(false);
+  let photoBlobError = $state("");
+  let activePhotoFetchSeq = 0;
 
   let displayOwnerName = $derived($currentUser?.name || "Bu Ratna");
   let displayOwnerRole = $derived.by(() => {
@@ -60,6 +64,130 @@
     if (role === "owner") return "Pemilik";
     return $currentUser?.role || "Pemilik";
   });
+
+  function getAuthToken() {
+    if (typeof window === "undefined") return "";
+    return (
+      localStorage.getItem("token") ||
+      localStorage.getItem("auth_token") ||
+      localStorage.getItem("access_token") ||
+      ""
+    );
+  }
+
+  function revokeCurrentPhotoUrl() {
+    if (
+      photoObjectUrl &&
+      typeof URL !== "undefined" &&
+      photoObjectUrl.startsWith("blob:")
+    ) {
+      URL.revokeObjectURL(photoObjectUrl);
+    }
+    photoObjectUrl = "";
+  }
+
+  /**
+   * @param {string} rawPhoto
+   * @returns {string}
+   */
+  function resolveFileEndpointPath(rawPhoto) {
+    const trimmed = String(rawPhoto || "").trim();
+    if (!trimmed) return "";
+
+    if (trimmed.startsWith("blob:") || trimmed.startsWith("data:")) {
+      return trimmed;
+    }
+
+    if (trimmed.startsWith("/api/files/")) {
+      return trimmed;
+    }
+
+    if (/^https?:\/\//i.test(trimmed)) {
+      try {
+        const parsed = new URL(trimmed);
+        const match = parsed.pathname.match(/\/api\/files\/([^/?#]+)/);
+        if (match && match[1]) {
+          return `/api/files/${encodeURIComponent(decodeURIComponent(match[1]))}`;
+        }
+        return trimmed;
+      } catch {
+        return trimmed;
+      }
+    }
+
+    const cleaned = trimmed
+      .replace(/^\/+/, "")
+      .replace(/^api\/files\//i, "")
+      .replace(/^uploads\//i, "");
+    const filename = cleaned.split("/").pop() || cleaned;
+    return `/api/files/${encodeURIComponent(filename)}`;
+  }
+
+  /**
+   * @param {string} rawPhoto
+   */
+  async function loadProtectedPhotoBlob(rawPhoto) {
+    const seq = ++activePhotoFetchSeq;
+    revokeCurrentPhotoUrl();
+    photoBlobError = "";
+
+    const targetPath = resolveFileEndpointPath(rawPhoto);
+    if (!targetPath) {
+      photoBlobLoading = false;
+      return;
+    }
+
+    if (targetPath.startsWith("blob:") || targetPath.startsWith("data:")) {
+      photoObjectUrl = targetPath;
+      photoBlobLoading = false;
+      return;
+    }
+
+    if (
+      /^https?:\/\//i.test(targetPath) &&
+      !targetPath.includes("/api/files/")
+    ) {
+      photoObjectUrl = targetPath;
+      photoBlobLoading = false;
+      return;
+    }
+
+    photoBlobLoading = true;
+    try {
+      const token = getAuthToken();
+      /** @type {Record<string, string>} */
+      const headers = {};
+      if (token) {
+        headers.Authorization = `Bearer ${token}`;
+      }
+
+      const res = await fetch(targetPath, { headers });
+      if (!res.ok) {
+        throw new Error(`Gagal memuat foto (HTTP ${res.status})`);
+      }
+
+      const blobResult = await res.blob();
+      if (seq !== activePhotoFetchSeq) {
+        if (typeof URL !== "undefined") {
+          const tempUrl = URL.createObjectURL(blobResult);
+          URL.revokeObjectURL(tempUrl);
+        }
+        return;
+      }
+
+      if (typeof URL !== "undefined") {
+        photoObjectUrl = URL.createObjectURL(blobResult);
+      }
+    } catch (/** @type {any} */ err) {
+      if (seq === activePhotoFetchSeq) {
+        photoBlobError = err?.message || "Gagal memuat foto bukti kendala.";
+      }
+    } finally {
+      if (seq === activePhotoFetchSeq) {
+        photoBlobLoading = false;
+      }
+    }
+  }
 
   /**
    * @param {any} dateValue
@@ -191,6 +319,7 @@
         candidate.url ||
         candidate.photo_url ||
         candidate.image_url ||
+        candidate.filename ||
         candidate.path ||
         ""
       );
@@ -215,7 +344,12 @@
         msg.user?.name ||
         "Pengguna";
       const roleRaw = String(
-        msg.sender_role || msg.role || msg.sender?.role || msg.user?.role || "",
+        msg.user_role ||
+          msg.sender_role ||
+          msg.role ||
+          msg.sender?.role ||
+          msg.user?.role ||
+          "",
       ).toLowerCase();
 
       let roleLabel = "";
@@ -307,6 +441,7 @@
       ...mobileStatusInfo,
       description: raw.description || raw.detail || "-",
       techNote:
+        raw.technical_note ||
         raw.technician_note ||
         raw.resolution_note ||
         raw.admin_note ||
@@ -411,7 +546,7 @@
 
     const trimmedQuery = searchQuery.trim();
     if (trimmedQuery) {
-      params.set("search", trimmedQuery);
+      params.set("q", trimmedQuery);
     }
 
     return await apiRequest(`/api/tickets?${params.toString()}`);
@@ -424,7 +559,7 @@
       params.set("limit", "100");
       const trimmedQuery = searchQuery.trim();
       if (trimmedQuery) {
-        params.set("search", trimmedQuery);
+        params.set("q", trimmedQuery);
       }
 
       /** @type {any} */
@@ -596,6 +731,11 @@
         }
 
         selectedReport = normalizedDetail;
+        if (normalizedDetail.photoUrl) {
+          await loadProtectedPhotoBlob(normalizedDetail.photoUrl);
+        } else {
+          revokeCurrentPhotoUrl();
+        }
       }
     } catch (/** @type {any} */ err) {
       detailError = err?.message || "Gagal memuat detail lengkap tiket.";
@@ -630,11 +770,18 @@
     selectedReport = report;
     detailError = "";
     isPhotoModalOpen = false;
+    revokeCurrentPhotoUrl();
     viewMode = "detail";
+    if (report?.photoUrl) {
+      loadProtectedPhotoBlob(report.photoUrl);
+    }
     fetchTicketDetail(report.id);
   }
 
   function backToReportList() {
+    activePhotoFetchSeq += 1;
+    revokeCurrentPhotoUrl();
+    photoBlobError = "";
     viewMode = "list";
     selectedReport = null;
     detailError = "";
@@ -666,6 +813,11 @@
 
   onMount(() => {
     fetchTickets();
+  });
+
+  onDestroy(() => {
+    activePhotoFetchSeq += 1;
+    revokeCurrentPhotoUrl();
   });
 </script>
 
@@ -791,9 +943,11 @@
                 onclick={openPhotoPreview}
                 title="Klik untuk memperbesar foto"
               >
-                {#if selectedReport.photoUrl}
+                {#if photoBlobLoading}
+                  <span>Memuat...</span>
+                {:else if photoObjectUrl}
                   <img
-                    src={selectedReport.photoUrl}
+                    src={photoObjectUrl}
                     alt="Foto bukti kendala {selectedReport.ticketCode}"
                     class="photo-thumb-img"
                   />
@@ -893,14 +1047,18 @@
         </div>
 
         <div class="photo-preview-stage">
-          {#if selectedReport.photoUrl}
+          {#if photoBlobLoading}
+            <div class="photo-preview-badge">Memuat Foto Bukti...</div>
+          {:else if photoObjectUrl}
             <img
-              src={selectedReport.photoUrl}
+              src={photoObjectUrl}
               alt="Bukti kendala {selectedReport.ticketCode}"
               class="photo-full-img"
             />
           {:else}
-            <div class="photo-preview-badge">Pratinjau Foto Bukti</div>
+            <div class="photo-preview-badge">
+              {photoBlobError || "Pratinjau Foto Bukti"}
+            </div>
           {/if}
           <p class="photo-preview-caption">{selectedReport.description}</p>
           <span class="photo-preview-hint"

@@ -42,14 +42,17 @@
    */
 
   /**
-   * @typedef {Object} PaymentRekapItem
+   * @typedef {Object} InvoiceRekapItem
    * @property {number | string} id
    * @property {string} [tenant_name]
    * @property {string} [room_number]
-   * @property {number | string} [gross_amount]
-   * @property {string} [gross_amount_rupiah]
+   * @property {number | string} [amount]
+   * @property {string} [amount_rupiah]
    * @property {string} [period_start]
+   * @property {string} [period_end]
+   * @property {string} [due_date]
    * @property {string | null} [paid_at]
+   * @property {string | null} [paid_at_wib]
    * @property {string} [status]
    */
 
@@ -88,7 +91,7 @@
 
   let paymentsLoading = $state(true);
   let paymentsError = $state("");
-  /** @type {PaymentRekapItem[]} */
+  /** @type {InvoiceRekapItem[]} */
   let paymentsList = $state([]);
 
   let ticketsLoading = $state(true);
@@ -155,6 +158,16 @@
     safeSummary.paid_this_month?.amount_rupiah || "Rp 0",
   );
 
+  function getCurrentPeriodeWib() {
+    const formatted = new Intl.DateTimeFormat("en-CA", {
+      timeZone: "Asia/Jakarta",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).format(new Date());
+    return formatted.slice(0, 7);
+  }
+
   /**
    * @param {any} err
    * @returns {boolean}
@@ -186,9 +199,9 @@
    * @returns {string}
    */
   function formatDate(isoOrDateString) {
-    if (!isoOrDateString) return "–";
+    if (!isoOrDateString || isoOrDateString === "–") return "–";
     const date = new Date(isoOrDateString);
-    if (isNaN(date.getTime())) return "–";
+    if (isNaN(date.getTime())) return String(isoOrDateString);
     return date.toLocaleDateString("id-ID", {
       day: "numeric",
       month: "short",
@@ -224,19 +237,15 @@
    * @param {string | null | undefined} status
    * @returns {{ label: string, type: 'paid' | 'pending' | 'overdue' }}
    */
-  function getPaymentStatusInfo(status) {
+  function getInvoiceStatusInfo(status) {
     switch (status) {
-      case "settlement":
+      case "paid":
         return { label: "Lunas", type: "paid" };
       case "pending":
         return { label: "Menunggu Pembayaran", type: "pending" };
-      case "expire":
-        return { label: "Kedaluwarsa", type: "overdue" };
-      case "deny":
-        return { label: "Ditolak", type: "overdue" };
-      case "failure":
-        return { label: "Gagal", type: "overdue" };
-      case "cancel":
+      case "unpaid":
+        return { label: "Belum Dibayar", type: "overdue" };
+      case "cancelled":
         return { label: "Dibatalkan", type: "overdue" };
       default:
         return { label: status || "-", type: "pending" };
@@ -245,16 +254,25 @@
 
   let recentPayments = $derived(
     paymentsList.map((row) => {
-      const statusInfo = getPaymentStatusInfo(row.status);
-      const amountText =
-        row.gross_amount_rupiah || formatRupiahValue(row.gross_amount);
-      const paidDateText = row.paid_at ? formatDate(row.paid_at) : "–";
+      const statusInfo = getInvoiceStatusInfo(row.status);
+      const amountText = row.amount_rupiah || formatRupiahValue(row.amount);
+      const paidDateText =
+        row.paid_at_wib && row.paid_at_wib !== "–"
+          ? row.paid_at_wib
+          : row.paid_at
+            ? formatDate(row.paid_at)
+            : "–";
+      const periodText = row.period_start
+        ? formatMonthPeriod(row.period_start)
+        : row.period_end
+          ? formatMonthPeriod(row.period_end)
+          : "-";
       return {
         id: row.id,
         tenantName: row.tenant_name || "-",
         roomNumber: row.room_number || "-",
         amount: amountText,
-        period: formatMonthPeriod(row.period_start),
+        period: periodText,
         paidAt: paidDateText,
         mobileMeta: `${amountText} · ${paidDateText}`,
         status: statusInfo.label,
@@ -332,12 +350,15 @@
     paymentsError = "";
 
     try {
+      const periode = getCurrentPeriodeWib();
       /** @type {any} */
-      const response = await apiRequest("/api/payments/rekap?limit=5");
+      const response = await apiRequest(
+        `/api/invoices?periode=${encodeURIComponent(periode)}&limit=5`,
+      );
       paymentsList = Array.isArray(response?.data) ? response.data : [];
     } catch (/** @type {any} */ error) {
       if (!isNotFoundError(error)) {
-        paymentsError = error?.message || "Gagal memuat rekap pembayaran.";
+        paymentsError = error?.message || "Gagal memuat rekap tagihan.";
       }
     } finally {
       paymentsLoading = false;

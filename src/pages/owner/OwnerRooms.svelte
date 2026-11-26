@@ -10,6 +10,21 @@
   let currentPage = $state(1);
   const perPage = 10;
 
+  // Track layar mobile untuk memilih arah animasi (y dari bawah untuk mobile, x dari kanan untuk desktop)
+  let isMobile = $state(false);
+
+  function checkMobile() {
+    if (typeof window !== "undefined") {
+      isMobile = window.innerWidth <= 768;
+    }
+  }
+
+  let sheetFlyParams = $derived(
+    isMobile
+      ? { y: 300, duration: 250, easing: cubicOut }
+      : { x: 300, duration: 250, easing: cubicOut },
+  );
+
   // --- STATE DATA API ---
   let loading = $state(true);
   let errorMsg = $state("");
@@ -17,13 +32,16 @@
   let rooms = $state([]);
   let totalCount = $state(0);
   let totalPages = $state(1);
-  let allRoomsCount = $state(0);
   let tabCounts = $state({
     all: 0,
     vacant: 0,
     occupied: 0,
     maintenance: 0,
   });
+
+  // Menyimpan ID kamar yang tarifnya dikosongkan secara manual di sesi ini
+  /** @type {Record<string, boolean>} */
+  let manuallyClearedPrices = $state({});
 
   // --- STATE DRAWER / BOTTOM SHEET & MODAL ---
   /** @type {'add' | 'edit' | 'confirm_maintenance' | 'confirm_vacant' | null} */
@@ -81,7 +99,7 @@
     }
     const num = Number(amount);
     if (num <= 0) return "Belum diisi";
-    return `Rp ${num.toLocaleString("id-ID")}`;
+    return `Rp${num.toLocaleString("id-ID")}`;
   }
 
   /**
@@ -129,9 +147,20 @@
     const status = normalizeStatus(raw.status);
     const roomNum = raw.room_number || raw.number || raw.code || "-";
     const roomType = raw.room_type || raw.type || "Standard";
-    const priceNum =
-      raw.price !== undefined && raw.price !== null ? Number(raw.price) : null;
-    const priceLabel = raw.price_rupiah || formatRupiah(priceNum);
+    const isClearedInSession =
+      raw.id !== undefined &&
+      raw.id !== null &&
+      Boolean(manuallyClearedPrices[String(raw.id)]);
+
+    const rawPriceNum =
+      raw.price !== undefined && raw.price !== null && raw.price !== ""
+        ? Number(raw.price)
+        : null;
+    const priceNum = isClearedInSession ? null : rawPriceNum;
+    const priceLabel = isClearedInSession
+      ? "Belum diisi"
+      : raw.price_rupiah || formatRupiah(priceNum);
+
     const occupantName = raw.occupant_name || raw.tenant_name || "-";
 
     let subText = "Belum ada penghuni";
@@ -160,51 +189,26 @@
   }
 
   /**
-   * @param {any} response
-   * @param {any[]} items
-   * @param {number} apiTotal
+   * Hitung total kamar per status menggunakan query `limit=1` dan `meta.total`
    */
-  function applyCountsFromResponse(response, items, apiTotal) {
-    const countsObj =
-      response?.counts || response?.meta?.counts || response?.summary;
-    if (countsObj && typeof countsObj === "object") {
-      const vacantVal = Number(
-        countsObj.available ?? countsObj.vacant ?? countsObj.kosong ?? 0,
-      );
-      const occupiedVal = Number(countsObj.occupied ?? countsObj.terisi ?? 0);
-      const mainVal = Number(countsObj.maintenance ?? countsObj.perbaikan ?? 0);
-      const allVal = Number(
-        countsObj.all ?? countsObj.total ?? vacantVal + occupiedVal + mainVal,
-      );
-
-      if (Number.isFinite(allVal)) {
-        allRoomsCount = allVal;
-      }
+  async function fetchTabCounts() {
+    try {
+      const [allRes, vacantRes, occupiedRes, maintenanceRes] =
+        await Promise.all([
+          apiRequest("/api/rooms?limit=1"),
+          apiRequest("/api/rooms?status=available&limit=1"),
+          apiRequest("/api/rooms?status=occupied&limit=1"),
+          apiRequest("/api/rooms?status=maintenance&limit=1"),
+        ]);
 
       tabCounts = {
-        all: Number.isFinite(allVal) ? allVal : allRoomsCount,
-        vacant: Number.isFinite(vacantVal) ? vacantVal : tabCounts.vacant,
-        occupied: Number.isFinite(occupiedVal)
-          ? occupiedVal
-          : tabCounts.occupied,
-        maintenance: Number.isFinite(mainVal) ? mainVal : tabCounts.maintenance,
+        all: allRes?.meta?.total ?? 0,
+        vacant: vacantRes?.meta?.total ?? 0,
+        occupied: occupiedRes?.meta?.total ?? 0,
+        maintenance: maintenanceRes?.meta?.total ?? 0,
       };
-      return;
-    }
-
-    if (selectedStatus === "all") {
-      allRoomsCount = apiTotal;
-      tabCounts = {
-        all: apiTotal,
-        vacant: items.filter((r) => r.status === "vacant").length,
-        occupied: items.filter((r) => r.status === "occupied").length,
-        maintenance: items.filter((r) => r.status === "maintenance").length,
-      };
-    } else {
-      tabCounts = {
-        ...tabCounts,
-        all: allRoomsCount,
-      };
+    } catch {
+      // Biarkan daftar utama tetap tampil bila hitung tab gagal
     }
   }
 
@@ -225,35 +229,22 @@
 
       /** @type {any} */
       const response = await apiRequest(`/api/rooms?${params.toString()}`);
-      const rawItems = Array.isArray(response?.data)
-        ? response.data
-        : Array.isArray(response?.rooms)
-          ? response.rooms
-          : Array.isArray(response)
-            ? response
-            : [];
+      const rawItems = Array.isArray(response?.data) ? response.data : [];
 
       const normalized = rawItems.map(normalizeRoomItem);
       rooms = normalized;
 
-      const pagination = response?.pagination || response?.meta || {};
-      const apiTotal = Number(
-        pagination.total ?? response?.total ?? normalized.length,
-      );
-      totalCount = Number.isFinite(apiTotal) ? apiTotal : normalized.length;
+      const meta = response?.meta || {};
+      totalCount = Number(meta.total ?? normalized.length);
       totalPages = Math.max(
         1,
-        Number(
-          pagination.total_pages ??
-            pagination.last_page ??
-            Math.ceil(totalCount / perPage) ??
-            1,
-        ),
+        Number(meta.total_pages ?? Math.ceil(totalCount / perPage)),
       );
 
-      applyCountsFromResponse(response, normalized, totalCount);
+      await fetchTabCounts();
     } catch (/** @type {any} */ err) {
-      errorMsg = err?.message || "Gagal memuat daftar kamar.";
+      errorMsg =
+        err?.data?.pesan || err?.message || "Gagal memuat daftar kamar.";
       rooms = [];
       totalCount = 0;
       totalPages = 1;
@@ -354,15 +345,28 @@
 
     isSubmitting = true;
     try {
-      await apiRequest("/api/rooms", {
+      /** @type {any} */
+      const createdRes = await apiRequest("/api/rooms", {
         method: "POST",
         body: payload,
       });
 
+      const createdId = createdRes?.data?.id;
+      if (
+        priceParsed !== null &&
+        createdId !== undefined &&
+        createdId !== null
+      ) {
+        const nextCleared = { ...manuallyClearedPrices };
+        delete nextCleared[String(createdId)];
+        manuallyClearedPrices = nextCleared;
+      }
+
       closeAllOverlays();
       await fetchRooms();
     } catch (/** @type {any} */ err) {
-      formError = err?.message || "Gagal menambahkan kamar baru.";
+      formError =
+        err?.data?.pesan || err?.message || "Gagal menambahkan kamar baru.";
     } finally {
       isSubmitting = false;
     }
@@ -393,6 +397,8 @@
       facilities: roomFacilitiesInput.trim() || null,
     };
 
+    // Jika diisi angka > 0, kirimkan price ke backend.
+    // Jika dikosongkan, jangan kirim price agar backend tidak menolak dengan error > 0.
     if (priceParsed !== null) {
       payload.price = priceParsed;
     }
@@ -404,10 +410,45 @@
         body: payload,
       });
 
-      closeAllOverlays();
-      await fetchRooms();
+      const roomIdKey = String(targetRoom.id);
+
+      if (priceParsed === null) {
+        manuallyClearedPrices = {
+          ...manuallyClearedPrices,
+          [roomIdKey]: true,
+        };
+
+        rooms = rooms.map((r) => {
+          if (String(r.id) === roomIdKey) {
+            return {
+              ...r,
+              number: cleanNumber,
+              type: cleanType,
+              priceNumber: null,
+              priceLabel: "Belum diisi",
+              facilities: roomFacilitiesInput.trim() || "-",
+            };
+          }
+          return r;
+        });
+
+        activeDrawerOrModal = null;
+        targetRoom = null;
+        formError = "";
+        await fetchTabCounts();
+      } else {
+        const nextCleared = { ...manuallyClearedPrices };
+        delete nextCleared[roomIdKey];
+        manuallyClearedPrices = nextCleared;
+
+        activeDrawerOrModal = null;
+        targetRoom = null;
+        formError = "";
+        await fetchRooms();
+      }
     } catch (/** @type {any} */ err) {
-      formError = err?.message || "Gagal memperbarui data kamar.";
+      formError =
+        err?.data?.pesan || err?.message || "Gagal memperbarui data kamar.";
     } finally {
       isSubmitting = false;
     }
@@ -428,7 +469,10 @@
       closeAllOverlays();
       await fetchRooms();
     } catch (/** @type {any} */ err) {
-      formError = err?.message || "Gagal mengubah status kamar ke maintenance.";
+      formError =
+        err?.data?.pesan ||
+        err?.message ||
+        "Gagal mengubah status kamar ke maintenance.";
       isSubmitting = false;
     }
   }
@@ -448,7 +492,10 @@
       closeAllOverlays();
       await fetchRooms();
     } catch (/** @type {any} */ err) {
-      formError = err?.message || "Gagal mengembalikan status kamar ke Kosong.";
+      formError =
+        err?.data?.pesan ||
+        err?.message ||
+        "Gagal mengembalikan status kamar ke Kosong.";
       isSubmitting = false;
     }
   }
@@ -468,7 +515,13 @@
   }
 
   onMount(() => {
+    checkMobile();
+    window.addEventListener("resize", checkMobile);
     fetchRooms();
+
+    return () => {
+      window.removeEventListener("resize", checkMobile);
+    };
   });
 </script>
 
@@ -717,7 +770,7 @@
     <aside
       class="room-drawer sheet-capable"
       aria-label="Tambah Kamar Baru"
-      transition:fly={{ x: 300, duration: 250, easing: cubicOut }}
+      transition:fly={sheetFlyParams}
     >
       <div class="sheet-handle mobile-only"></div>
       <div class="drawer-header">
@@ -839,7 +892,7 @@
     <aside
       class="room-drawer sheet-capable"
       aria-label="Ubah Kamar"
-      transition:fly={{ x: 300, duration: 250, easing: cubicOut }}
+      transition:fly={sheetFlyParams}
     >
       <div class="sheet-handle mobile-only"></div>
       <div class="drawer-header">
@@ -908,10 +961,12 @@
             type="text"
             class="field-input"
             bind:value={roomPriceInput}
+            placeholder="Kosongkan jika belum diisi"
             disabled={isSubmitting}
           />
           <span class="field-hint desktop-only"
-            >Perubahan harga berlaku untuk tagihan yang terbit berikutnya.</span
+            >Kosongkan lalu simpan untuk mengembalikan tampilan tarif menjadi
+            "Belum diisi".</span
           >
         </div>
 
@@ -942,7 +997,7 @@
               onclick={() => openVacantConfirm(targetRoom)}
               disabled={isSubmitting}
             >
-              Kembalikan ke Kosong
+              Set Status Kosong
             </button>
           {:else if targetRoom.status !== "occupied"}
             <button
@@ -1034,7 +1089,7 @@
 
           <button
             type="button"
-            class="btn-brown-primary mobile-only"
+            class="btn-solid-red mobile-only"
             onclick={handleConfirmMaintenance}
             disabled={isSubmitting}
           >
@@ -1103,15 +1158,7 @@
           </span>
         </p>
 
-        <div class="confirm-modal-actions confirm-modal-actions--save-first">
-          <button
-            type="button"
-            class="btn-brown-primary btn-modal-save desktop-only"
-            onclick={handleSetVacantFromMaintenance}
-            disabled={isSubmitting}
-          >
-            {isSubmitting ? "Menyimpan..." : "Ya, simpan"}
-          </button>
+        <div class="confirm-modal-actions">
           <button
             type="button"
             class="btn-modal-cancel desktop-only"
@@ -1119,6 +1166,14 @@
             disabled={isSubmitting}
           >
             Batal
+          </button>
+          <button
+            type="button"
+            class="btn-brown-primary btn-modal-save desktop-only"
+            onclick={handleSetVacantFromMaintenance}
+            disabled={isSubmitting}
+          >
+            {isSubmitting ? "Menyimpan..." : "Ya, simpan"}
           </button>
 
           <button
@@ -1146,6 +1201,28 @@
 <style>
   .mobile-only {
     display: none;
+  }
+
+  .btn-solid-red {
+    width: 100%;
+    height: 38px;
+    border: none;
+    border-radius: 8px;
+    background-color: #e02424;
+    color: #ffffff;
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+
+  .btn-solid-red:hover:not(:disabled) {
+    background-color: #c81e1e;
+  }
+
+  .btn-solid-red:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
   }
 
   .state-card {
@@ -1646,10 +1723,6 @@
     align-items: center;
     justify-content: flex-end;
     gap: 10px;
-  }
-
-  .confirm-modal-actions--save-first {
-    justify-content: flex-start;
   }
 
   .btn-modal-save {

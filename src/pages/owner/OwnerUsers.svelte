@@ -9,6 +9,21 @@
   let selectedRole = $state("all"); // 'all' | 'tenant' | 'guardian' | 'manager' | 'owner'
   let searchQuery = $state("");
 
+  // Track layar mobile untuk memilih arah animasi (y dari bawah untuk mobile, x dari kanan untuk desktop)
+  let isMobile = $state(false);
+
+  function checkMobile() {
+    if (typeof window !== "undefined") {
+      isMobile = window.innerWidth <= 768;
+    }
+  }
+
+  let sheetFlyParams = $derived(
+    isMobile
+      ? { y: 300, duration: 250, easing: cubicOut }
+      : { x: 300, duration: 250, easing: cubicOut },
+  );
+
   // --- STATE DATA API & PAGINATION ---
   let loading = $state(true);
   let errorMsg = $state("");
@@ -16,7 +31,10 @@
   let users = $state([]);
   /** @type {any[]} */
   let guardianOptions = $state([]);
-  let allUsersCount = $state(0);
+  /** @type {Record<string, string>} */
+  let activeTenantRoomMap = $state({});
+  let totalCount = $state(0);
+  let totalPages = $state(1);
 
   let currentPage = $state(1);
   const perPage = 10;
@@ -97,53 +115,14 @@
     });
   }
 
-  let filteredUsers = $derived.by(() => {
-    const q = searchQuery.trim().toLowerCase();
-    const baseList = !q
-      ? users
-      : users.filter((/** @type {any} */ u) => {
-          return (
-            String(u.name || "")
-              .toLowerCase()
-              .includes(q) ||
-            String(u.email || "")
-              .toLowerCase()
-              .includes(q) ||
-            String(u.phone || "")
-              .toLowerCase()
-              .includes(q) ||
-            String(u.roleLabel || "")
-              .toLowerCase()
-              .includes(q) ||
-            String(u.roleShort || "")
-              .toLowerCase()
-              .includes(q) ||
-            String(u.guardian || "")
-              .toLowerCase()
-              .includes(q)
-          );
-        });
-
-    return sortUsersByRoleOrder(baseList);
-  });
-
-  let totalPages = $derived.by(() => {
-    return Math.max(1, Math.ceil(filteredUsers.length / perPage));
-  });
-
-  let pagedUsers = $derived.by(() => {
-    const start = (currentPage - 1) * perPage;
-    return filteredUsers.slice(start, start + perPage);
-  });
-
   let startUserIndex = $derived.by(() => {
-    if (filteredUsers.length === 0) return 0;
+    if (users.length === 0) return 0;
     return (currentPage - 1) * perPage + 1;
   });
 
   let endUserIndex = $derived.by(() => {
-    if (filteredUsers.length === 0) return 0;
-    return Math.min(currentPage * perPage, filteredUsers.length);
+    if (users.length === 0) return 0;
+    return Math.min(currentPage * perPage, totalCount);
   });
 
   /**
@@ -242,6 +221,98 @@
   }
 
   /**
+   * Mengecek apakah status kontrak memang aktif (sudah berjalan & terbayar).
+   * Kontrak berstatus "Menunggu Pembayaran" / "pending" tidak dianggap aktif.
+   * @param {any} rawStatus
+   */
+  function isActiveContractStatus(rawStatus) {
+    const s = String(rawStatus || "")
+      .trim()
+      .toLowerCase();
+    return s === "active" || s === "aktif";
+  }
+
+  /**
+   * Mengambil kamar yang benar-benar memiliki kontrak AKTIF saja.
+   */
+  async function fetchTenantRoomMapping() {
+    /** @type {Record<string, string>} */
+    const nextMap = {};
+    /** @type {Set<string>} */
+    const activeRoomNumbers = new Set();
+
+    try {
+      /** @type {any} */
+      const contractsRes = await apiRequest("/api/contracts?limit=100");
+      const contracts = Array.isArray(contractsRes?.data)
+        ? contractsRes.data
+        : [];
+
+      for (const c of contracts) {
+        if (!isActiveContractStatus(c?.status)) continue;
+
+        const roomNum = String(
+          c?.room_number || c?.room?.room_number || c?.room?.number || "",
+        ).trim();
+        if (!roomNum) continue;
+
+        activeRoomNumbers.add(roomNum.toLowerCase());
+
+        const tenantId = c?.tenant_id || c?.tenant?.id || "";
+        const tenantName = String(
+          c?.tenant_name || c?.tenant?.name || "",
+        ).trim();
+
+        if (tenantId !== "" && tenantId !== undefined) {
+          nextMap[`id:${String(tenantId)}`] = roomNum;
+        }
+        if (tenantName) {
+          nextMap[`name:${tenantName.toLowerCase()}`] = roomNum;
+        }
+      }
+    } catch {
+      // Abaikan jika endpoint contracts gagal
+    }
+
+    try {
+      /** @type {any} */
+      const roomsRes = await apiRequest("/api/rooms?status=occupied&limit=100");
+      const occupiedRooms = Array.isArray(roomsRes?.data) ? roomsRes.data : [];
+
+      for (const r of occupiedRooms) {
+        const roomNum = String(
+          r?.room_number || r?.number || r?.code || "",
+        ).trim();
+        if (!roomNum) continue;
+
+        // Jika data kontrak tersedia, pastikan kamar memang termasuk kontrak aktif
+        if (
+          activeRoomNumbers.size > 0 &&
+          !activeRoomNumbers.has(roomNum.toLowerCase())
+        ) {
+          continue;
+        }
+
+        const occupantName = String(
+          r?.occupant_name || r?.tenant_name || "",
+        ).trim();
+        const occupantId = r?.occupant_id || r?.tenant_id || "";
+
+        if (occupantId !== "" && occupantId !== undefined) {
+          nextMap[`id:${String(occupantId)}`] = roomNum;
+        }
+        if (occupantName) {
+          nextMap[`name:${occupantName.toLowerCase()}`] = roomNum;
+        }
+      }
+    } catch {
+      // Abaikan jika endpoint rooms gagal
+    }
+
+    activeTenantRoomMap = nextMap;
+  }
+
+  /**
    * @param {any} raw
    * @param {any[]} allRawItems
    */
@@ -249,20 +320,28 @@
     const roleKey = normalizeRole(raw.role);
     const roleShort = getRoleShortLabel(roleKey);
     const statusKey = normalizeStatus(raw);
-    const roomNum =
-      raw.room_number ||
-      raw.room?.room_number ||
-      raw.contract?.room_number ||
+    const userName = raw.name || raw.full_name || "Pengguna";
+
+    const mappedActiveRoomNum =
+      (raw.id !== undefined && raw.id !== null
+        ? activeTenantRoomMap[`id:${String(raw.id)}`] || ""
+        : "") ||
+      activeTenantRoomMap[`name:${String(userName).trim().toLowerCase()}`] ||
       "";
+
     const guardianName =
       raw.guardian_name || raw.guardian?.name || raw.guardian || "";
     const guardianId = raw.guardian_id || raw.guardian?.id || "";
-    const userName = raw.name || raw.full_name || "Pengguna";
 
     let roleLabel = roleShort;
     if (roleKey === "tenant") {
-      if (roomNum) roleLabel = `${roleShort} · Kamar ${roomNum}`;
-      else if (guardianName) roleLabel = `${roleShort} · Wali: ${guardianName}`;
+      // Jika punya kamar dengan kontrak aktif -> tampilkan kamar
+      // Jika belum punya kamar aktif tapi memiliki wali -> tampilkan wali
+      if (mappedActiveRoomNum) {
+        roleLabel = `${roleShort} · Kamar ${mappedActiveRoomNum}`;
+      } else if (guardianName) {
+        roleLabel = `${roleShort} · Wali: ${guardianName}`;
+      }
     } else if (roleKey === "guardian") {
       /** @type {string[]} */
       const linkedTenants = [];
@@ -307,7 +386,7 @@
       }
 
       if (linkedTenants.length > 0) {
-        roleLabel = `${roleShort} · Penyewa: ${linkedTenants.join(", ")}`;
+        roleLabel = `${roleShort} · ${linkedTenants.join(", ")}`;
       }
     }
 
@@ -328,67 +407,45 @@
   }
 
   /**
-   * @param {any} response
-   * @param {any[]} items
+   * Hitung jumlah pengguna per peran secara presisi dengan query limit=1
    */
-  function applyCountsFromResponse(response, items) {
-    const countsObj =
-      response?.counts || response?.meta?.counts || response?.summary;
-    if (countsObj && typeof countsObj === "object") {
-      const tVal = Number(countsObj.tenant ?? countsObj.penyewa ?? 0);
-      const gVal = Number(countsObj.guardian ?? countsObj.wali ?? 0);
-      const mVal = Number(
-        countsObj.caretaker ?? countsObj.manager ?? countsObj.pengelola ?? 0,
-      );
-      const oVal = Number(countsObj.owner ?? countsObj.pemilik ?? 0);
-      const allVal = Number(
-        countsObj.all ?? countsObj.total ?? tVal + gVal + mVal + oVal,
-      );
-
-      if (Number.isFinite(allVal)) {
-        allUsersCount = allVal;
-      }
+  async function fetchRoleCounts() {
+    try {
+      const [allRes, tenantRes, guardianRes, caretakerRes, ownerRes] =
+        await Promise.all([
+          apiRequest("/api/users?limit=1"),
+          apiRequest("/api/users?role=tenant&limit=1"),
+          apiRequest("/api/users?role=guardian&limit=1"),
+          apiRequest("/api/users?role=caretaker&limit=1"),
+          apiRequest("/api/users?role=owner&limit=1"),
+        ]);
 
       roleCounts = {
-        all: Number.isFinite(allVal) ? allVal : allUsersCount,
-        tenant: Number.isFinite(tVal) ? tVal : roleCounts.tenant,
-        guardian: Number.isFinite(gVal) ? gVal : roleCounts.guardian,
-        manager: Number.isFinite(mVal) ? mVal : roleCounts.manager,
-        owner: Number.isFinite(oVal) ? oVal : roleCounts.owner,
+        all: allRes?.meta?.total ?? 0,
+        tenant: tenantRes?.meta?.total ?? 0,
+        guardian: guardianRes?.meta?.total ?? 0,
+        manager: caretakerRes?.meta?.total ?? 0,
+        owner: ownerRes?.meta?.total ?? 0,
       };
-      return;
-    }
-
-    if (selectedRole === "all") {
-      const apiTotal = Number(
-        response?.meta?.total ?? response?.total ?? items.length,
-      );
-      allUsersCount = Number.isFinite(apiTotal) ? apiTotal : items.length;
-      roleCounts = {
-        all: allUsersCount,
-        tenant: items.filter((/** @type {any} */ u) => u.role === "tenant")
-          .length,
-        guardian: items.filter((/** @type {any} */ u) => u.role === "guardian")
-          .length,
-        manager: items.filter((/** @type {any} */ u) => u.role === "manager")
-          .length,
-        owner: items.filter((/** @type {any} */ u) => u.role === "owner")
-          .length,
-      };
-    } else {
-      roleCounts = {
-        ...roleCounts,
-        all: allUsersCount,
-      };
+    } catch {
+      // Biarkan daftar utama tetap berjalan jika hitung tab gagal
     }
   }
 
+  /**
+   * Mengambil daftar akun pengguna dengan paginasi backend
+   */
   async function fetchUsers() {
     loading = true;
     errorMsg = "";
 
     try {
+      await fetchTenantRoomMapping();
+
       const params = new URLSearchParams();
+      params.set("page", String(currentPage));
+      params.set("limit", String(perPage));
+
       if (selectedRole !== "all") {
         params.set("role", mapRoleToApi(selectedRole));
       }
@@ -396,10 +453,8 @@
         params.set("q", searchQuery.trim());
       }
 
-      const queryStr = params.toString();
-      const endpoint = queryStr ? `/api/users?${queryStr}` : "/api/users";
       /** @type {any} */
-      const response = await apiRequest(endpoint);
+      const response = await apiRequest(`/api/users?${params.toString()}`);
 
       const rawItems = Array.isArray(response?.data)
         ? response.data
@@ -416,20 +471,40 @@
       );
       users = normalized;
 
-      const guardians = normalized
-        .filter((/** @type {any} */ u) => u.role === "guardian")
-        .map((/** @type {any} */ u) => ({ id: u.id, name: u.name }));
-      if (guardians.length > 0) {
-        guardianOptions = guardians;
-      }
+      const meta = response?.meta || {};
+      totalCount = Number(meta.total ?? normalized.length);
+      totalPages = Math.max(
+        1,
+        Number(meta.total_pages ?? Math.ceil(totalCount / perPage)),
+      );
 
-      applyCountsFromResponse(response, normalized);
+      fetchGuardianOptions();
+      fetchRoleCounts();
     } catch (/** @type {any} */ err) {
-      errorMsg = err?.message || "Gagal memuat daftar pengguna.";
+      errorMsg =
+        err?.data?.pesan || err?.message || "Gagal memuat daftar pengguna.";
       users = [];
-      roleCounts = { all: 0, tenant: 0, guardian: 0, manager: 0, owner: 0 };
+      totalCount = 0;
+      totalPages = 1;
     } finally {
       loading = false;
+    }
+  }
+
+  /**
+   * Mengambil daftar seluruh akun wali untuk opsi dropdown
+   */
+  async function fetchGuardianOptions() {
+    try {
+      /** @type {any} */
+      const res = await apiRequest("/api/users?role=guardian&limit=100");
+      const rawGuardians = Array.isArray(res?.data) ? res.data : [];
+      guardianOptions = rawGuardians.map((/** @type {any} */ g) => ({
+        id: g.id,
+        name: g.name || g.full_name || "Akun Wali",
+      }));
+    } catch {
+      // Abaikan jika pemanggilan opsi wali opsional gagal
     }
   }
 
@@ -445,12 +520,14 @@
   function handlePrevUserPage() {
     if (currentPage > 1) {
       currentPage -= 1;
+      fetchUsers();
     }
   }
 
   function handleNextUserPage() {
     if (currentPage < totalPages) {
       currentPage += 1;
+      fetchUsers();
     }
   }
 
@@ -597,7 +674,8 @@
         closeOverlay();
       }
     } catch (/** @type {any} */ err) {
-      formError = err?.message || "Gagal mendaftarkan akun baru.";
+      formError =
+        err?.data?.pesan || err?.message || "Gagal mendaftarkan akun baru.";
     } finally {
       isSubmitting = false;
     }
@@ -634,7 +712,8 @@
       closeOverlay();
       await fetchUsers();
     } catch (/** @type {any} */ err) {
-      formError = err?.message || "Gagal memperbarui data pengguna.";
+      formError =
+        err?.data?.pesan || err?.message || "Gagal memperbarui data pengguna.";
     } finally {
       isSubmitting = false;
     }
@@ -653,7 +732,8 @@
       closeOverlay();
       await fetchUsers();
     } catch (/** @type {any} */ err) {
-      formError = err?.message || "Gagal menonaktifkan akun.";
+      formError =
+        err?.data?.pesan || err?.message || "Gagal menonaktifkan akun.";
     } finally {
       isSubmitting = false;
     }
@@ -672,7 +752,8 @@
       closeOverlay();
       await fetchUsers();
     } catch (/** @type {any} */ err) {
-      formError = err?.message || "Gagal mengaktifkan akun.";
+      formError =
+        err?.data?.pesan || err?.message || "Gagal mengaktifkan akun.";
     } finally {
       isSubmitting = false;
     }
@@ -702,17 +783,25 @@
 
       resetTempPassword = tempPass;
       resetInfoMessage =
+        res?.pesan ||
         res?.message ||
         `Password akun ${targetUser.name} berhasil direset. Salin dan berikan ke pengguna untuk diganti di profil.`;
     } catch (/** @type {any} */ err) {
-      formError = err?.message || "Gagal mereset password akun.";
+      formError =
+        err?.data?.pesan || err?.message || "Gagal mereset password akun.";
     } finally {
       isSubmitting = false;
     }
   }
 
   onMount(() => {
+    checkMobile();
+    window.addEventListener("resize", checkMobile);
     fetchUsers();
+
+    return () => {
+      window.removeEventListener("resize", checkMobile);
+    };
   });
 </script>
 
@@ -943,7 +1032,7 @@
           >Coba Lagi</button
         >
       </div>
-    {:else if filteredUsers.length === 0}
+    {:else if users.length === 0}
       <div class="state-card" in:fade={{ duration: 160 }}>
         {searchQuery.trim()
           ? `Tidak ada pengguna yang cocok dengan "${searchQuery.trim()}".`
@@ -952,7 +1041,7 @@
     {:else}
       <!-- MOBILE CARD LIST -->
       <div class="mobile-only user-card-list" in:fade={{ duration: 160 }}>
-        {#each pagedUsers as user (user.id)}
+        {#each users as user (user.id)}
           {@const rowTempPass = sessionTempPasswords[String(user.id)]}
           <article class="user-card">
             <div class="user-card-top">
@@ -1112,7 +1201,7 @@
               </tr>
             </thead>
             <tbody>
-              {#each pagedUsers as user (user.id)}
+              {#each users as user (user.id)}
                 {@const rowTempPass = sessionTempPasswords[String(user.id)]}
                 <tr>
                   <td class="cell-name">{user.name}</td>
@@ -1227,8 +1316,8 @@
 
         <div class="pagination-bar">
           <span class="pagination-summary">
-            {#if filteredUsers.length > 0}
-              Menampilkan {startUserIndex}-{endUserIndex} dari {filteredUsers.length}
+            {#if totalCount > 0}
+              Menampilkan {startUserIndex}–{endUserIndex} dari {totalCount}
               pengguna
             {:else}
               Menampilkan 0 pengguna
@@ -1273,7 +1362,7 @@
       role="dialog"
       aria-modal="true"
       aria-label="Daftarkan Akun Baru"
-      transition:fly={{ x: 300, duration: 250, easing: cubicOut }}
+      transition:fly={sheetFlyParams}
     >
       <div class="sheet-handle mobile-only"></div>
       <div class="sheet-top">
@@ -1468,7 +1557,7 @@
       role="dialog"
       aria-modal="true"
       aria-label="Ubah Akun"
-      transition:fly={{ x: 300, duration: 250, easing: cubicOut }}
+      transition:fly={sheetFlyParams}
     >
       <div class="sheet-handle mobile-only"></div>
       <div class="sheet-top-with-sub">
@@ -1678,7 +1767,22 @@
         <div class="confirm-actions">
           <button
             type="button"
-            class="btn-solid-brown"
+            class="btn-outline-light desktop-only"
+            onclick={closeOverlay}
+            disabled={isSubmitting}>Batal</button
+          >
+          <button
+            type="button"
+            class="btn-solid-brown desktop-only"
+            onclick={handleConfirmResetPassword}
+            disabled={isSubmitting}
+          >
+            {isSubmitting ? "Memproses..." : "Ya, reset password"}
+          </button>
+
+          <button
+            type="button"
+            class="btn-solid-brown mobile-only"
             onclick={handleConfirmResetPassword}
             disabled={isSubmitting}
           >
@@ -1686,7 +1790,7 @@
           </button>
           <button
             type="button"
-            class="btn-outline-light"
+            class="btn-outline-light mobile-only"
             onclick={closeOverlay}
             disabled={isSubmitting}>Batal</button
           >
@@ -1731,7 +1835,22 @@
       <div class="confirm-actions">
         <button
           type="button"
-          class="btn-solid-red"
+          class="btn-outline-light desktop-only"
+          onclick={closeOverlay}
+          disabled={isSubmitting}>Batal</button
+        >
+        <button
+          type="button"
+          class="btn-solid-red desktop-only"
+          onclick={handleConfirmDeactivate}
+          disabled={isSubmitting}
+        >
+          {isSubmitting ? "Memproses..." : "Ya, lanjutkan"}
+        </button>
+
+        <button
+          type="button"
+          class="btn-solid-red mobile-only"
           onclick={handleConfirmDeactivate}
           disabled={isSubmitting}
         >
@@ -1739,7 +1858,7 @@
         </button>
         <button
           type="button"
-          class="btn-outline-light"
+          class="btn-outline-light mobile-only"
           onclick={closeOverlay}
           disabled={isSubmitting}>Batal</button
         >
@@ -1782,7 +1901,22 @@
       <div class="confirm-actions">
         <button
           type="button"
-          class="btn-solid-brown"
+          class="btn-outline-light desktop-only"
+          onclick={closeOverlay}
+          disabled={isSubmitting}>Batal</button
+        >
+        <button
+          type="button"
+          class="btn-solid-brown desktop-only"
+          onclick={handleConfirmActivate}
+          disabled={isSubmitting}
+        >
+          {isSubmitting ? "Memproses..." : "Ya, simpan"}
+        </button>
+
+        <button
+          type="button"
+          class="btn-solid-brown mobile-only"
           onclick={handleConfirmActivate}
           disabled={isSubmitting}
         >
@@ -1790,7 +1924,7 @@
         </button>
         <button
           type="button"
-          class="btn-outline-light"
+          class="btn-outline-light mobile-only"
           onclick={closeOverlay}
           disabled={isSubmitting}>Batal</button
         >
@@ -2538,7 +2672,6 @@
       cursor: pointer;
     }
 
-    /* Formasi 2 di atas, 3 di bawah seperti filter Kontrak Sewa */
     .role-pills-wrap {
       display: flex;
       flex-wrap: wrap;

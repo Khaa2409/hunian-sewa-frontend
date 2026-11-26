@@ -1,8 +1,8 @@
 <script>
-  import { fly, fade } from 'svelte/transition';
-  import { cubicOut } from 'svelte/easing';
-  import LogoutButton from '../components/LogoutButton.svelte';
-  import { currentUser } from '../stores/auth.js';
+  import { fly, fade } from "svelte/transition";
+  import { cubicOut } from "svelte/easing";
+  import LogoutButton from "../components/LogoutButton.svelte";
+  import { currentUser } from "../stores/auth.js";
 
   /**
    * @typedef {Object} NavItem
@@ -15,6 +15,7 @@
    * @typedef {Object} DashboardLayoutProps
    * @property {string} [activeKey]
    * @property {string} [role]
+   * @property {string} [title]
    * @property {string} [ownerName]
    * @property {string} [ownerRole]
    * @property {((item: NavItem) => void) | null} [onNavigate]
@@ -23,52 +24,65 @@
 
   /** @type {DashboardLayoutProps} */
   let {
-    activeKey = '',
-    role = '',
-    ownerName = '',
-    ownerRole = '',
+    activeKey = "",
+    role = "",
+    title = "",
+    ownerName = "",
+    ownerRole = "",
     onNavigate = null,
-    children
+    children,
   } = $props();
 
   let isMobileMenuOpen = $state(false);
   let isProfileMenuOpen = $state(false);
-  let isMobileViewport = $state(typeof window !== 'undefined' ? window.innerWidth <= 768 : false);
+  let isMobileViewport = $state(
+    typeof window !== "undefined" ? window.innerWidth <= 768 : false,
+  );
 
   /**
    * @param {string | null | undefined} roleValue
    * @returns {string}
    */
   function formatRoleLabel(roleValue) {
-    if (!roleValue) return 'Pemilik';
+    if (!roleValue) return "Pemilik";
     const normalized = String(roleValue).toLowerCase();
-    if (normalized === 'owner') return 'Pemilik';
-    if (normalized === 'caretaker') return 'Pengelola';
-    if (normalized === 'guardian') return 'Wali';
-    if (normalized === 'tenant') return 'Penyewa';
+    if (normalized === "owner") return "Pemilik";
+    if (normalized === "caretaker") return "Pengelola";
+    if (normalized === "guardian") return "Wali";
+    if (normalized === "tenant") return "Penyewa";
     return roleValue;
   }
 
   let effectiveRoleKey = $derived.by(() => {
-    const raw = role || $currentUser?.role || 'owner';
+    const raw = role || $currentUser?.role || "owner";
     return String(raw).toLowerCase();
   });
 
-  let isCaretaker = $derived(effectiveRoleKey === 'caretaker');
+  let isCaretaker = $derived(effectiveRoleKey === "caretaker");
+  let isTenant = $derived(effectiveRoleKey === "tenant");
+  let isGuardian = $derived(effectiveRoleKey === "guardian");
 
-  let routePrefix = $derived(isCaretaker ? '/caretaker' : '/owner');
+  let routePrefix = $derived.by(() => {
+    if (isTenant) return "/tenant";
+    if (isGuardian) return "/guardian";
+    if (isCaretaker) return "/caretaker";
+    return "/owner";
+  });
 
   let resolvedOwnerName = $derived.by(() => {
     if (ownerName) return ownerName;
     if ($currentUser?.name) return $currentUser.name;
-    return isCaretaker ? 'Pengelola' : 'Bu Ratna';
+    if (isTenant) return "Penyewa";
+    if (isGuardian) return "Wali";
+    if (isCaretaker) return "Pengelola";
+    return "Bu Ratna";
   });
 
   let resolvedOwnerRole = $derived.by(() => {
     if (ownerRole) return ownerRole;
     if (role) return formatRoleLabel(role);
     if ($currentUser?.role) return formatRoleLabel($currentUser.role);
-    return 'Pemilik';
+    return "Pemilik";
   });
 
   /**
@@ -77,9 +91,9 @@
    */
   function normalizePath(raw) {
     if (!raw) return routePrefix;
-    let cleaned = String(raw).replace(/^#/, '').split('?')[0];
-    if (!cleaned.startsWith('/')) cleaned = `/${cleaned}`;
-    if (cleaned.length > 1 && cleaned.endsWith('/')) {
+    let cleaned = String(raw).replace(/^#/, "").split("?")[0];
+    if (!cleaned.startsWith("/")) cleaned = `/${cleaned}`;
+    if (cleaned.length > 1 && cleaned.endsWith("/")) {
       cleaned = cleaned.slice(0, -1);
     }
     return cleaned || routePrefix;
@@ -89,51 +103,106 @@
    * @returns {string}
    */
   function getHashPath() {
-    if (typeof window === 'undefined') return routePrefix;
+    if (typeof window === "undefined") return routePrefix;
     return normalizePath(window.location.hash);
   }
 
   let currentPath = $state(getHashPath());
 
-  const assetModules = import.meta.glob('../assets/hunify-logo-dark.*', {
+  const assetModules = import.meta.glob("../assets/hunify-logo-dark.*", {
     eager: true,
-    import: 'default'
+    import: "default",
   });
-  const nestedAssetModules = import.meta.glob('../../assets/hunify-logo-dark.*', {
-    eager: true,
-    import: 'default'
-  });
+  const nestedAssetModules = import.meta.glob(
+    "../../assets/hunify-logo-dark.*",
+    {
+      eager: true,
+      import: "default",
+    },
+  );
 
   let logoDark = $derived.by(() => {
     /** @type {Record<string, unknown>} */
     const allEntries = { ...nestedAssetModules, ...assetModules };
-    const matchedKey = Object.keys(allEntries).find((k) => k.includes('hunify-logo-dark'));
-    const val = matchedKey ? allEntries[matchedKey] : '';
-    return typeof val === 'string' ? val : '';
+    const matchedKey = Object.keys(allEntries).find((k) =>
+      k.includes("hunify-logo-dark"),
+    );
+    const val = matchedKey ? allEntries[matchedKey] : "";
+    return typeof val === "string" ? val : "";
   });
 
   /** @type {NavItem[]} */
   let navItems = $derived.by(() => {
     const prefix = routePrefix;
+
+    if (isTenant) {
+      return [
+        { key: "dashboard", label: "Beranda", href: prefix },
+        {
+          key: "announcements",
+          label: "Pengumuman",
+          href: `${prefix}/announcements`,
+        },
+        {
+          key: "reports",
+          label: "Laporan Kerusakan",
+          href: `${prefix}/damage-reports`,
+        },
+        {
+          key: "bills",
+          label: "Tagihan & Pembayaran",
+          href: `${prefix}/bills-payments`,
+        },
+      ];
+    }
+
+    if (isGuardian) {
+      return [
+        { key: "dashboard", label: "Beranda", href: prefix },
+        {
+          key: "announcements",
+          label: "Pengumuman",
+          href: `${prefix}/announcements`,
+        },
+        {
+          key: "bills",
+          label: "Tagihan & Pembayaran",
+          href: `${prefix}/bills-payments`,
+        },
+      ];
+    }
+
     /** @type {NavItem[]} */
     const baseItems = [
-      { key: 'dashboard', label: 'Beranda', href: prefix },
-      { key: 'announcements', label: 'Pengumuman', href: `${prefix}/announcements` },
-      { key: 'reports', label: 'Laporan Kerusakan', href: `${prefix}/maintenance` },
-      { key: 'rooms', label: 'Kamar & Penghuni', href: `${prefix}/rooms` },
-      { key: 'users', label: 'Pengguna', href: `${prefix}/users` },
-      { key: 'contracts', label: 'Kontrak Sewa', href: `${prefix}/contracts` }
+      { key: "dashboard", label: "Beranda", href: prefix },
+      {
+        key: "announcements",
+        label: "Pengumuman",
+        href: `${prefix}/announcements`,
+      },
+      {
+        key: "reports",
+        label: "Laporan Kerusakan",
+        href: `${prefix}/maintenance`,
+      },
+      { key: "rooms", label: "Kamar & Penghuni", href: `${prefix}/rooms` },
+      { key: "users", label: "Pengguna", href: `${prefix}/users` },
+      { key: "contracts", label: "Kontrak Sewa", href: `${prefix}/contracts` },
     ];
 
     if (!isCaretaker) {
-      baseItems.push({ key: 'finance', label: 'Laporan Keuangan', href: `${prefix}/finance` });
+      baseItems.push({
+        key: "finance",
+        label: "Laporan Keuangan",
+        href: `${prefix}/finance`,
+      });
     }
 
     return baseItems;
   });
 
   $effect(() => {
-    if (typeof window === 'undefined') return;
+    if (typeof window === "undefined") return;
 
     const syncPath = () => {
       currentPath = getHashPath();
@@ -145,37 +214,51 @@
 
     syncPath();
     syncViewport();
-    window.addEventListener('hashchange', syncPath);
-    window.addEventListener('popstate', syncPath);
-    window.addEventListener('resize', syncViewport);
+    window.addEventListener("hashchange", syncPath);
+    window.addEventListener("popstate", syncPath);
+    window.addEventListener("resize", syncViewport);
 
     return () => {
-      window.removeEventListener('hashchange', syncPath);
-      window.removeEventListener('popstate', syncPath);
-      window.removeEventListener('resize', syncViewport);
+      window.removeEventListener("hashchange", syncPath);
+      window.removeEventListener("popstate", syncPath);
+      window.removeEventListener("resize", syncViewport);
     };
   });
 
   let resolvedActiveKey = $derived.by(() => {
     const path = normalizePath(currentPath);
 
-    if (path === '/owner' || path === '/caretaker') return 'dashboard';
+    if (
+      path === "/owner" ||
+      path === "/caretaker" ||
+      path === "/tenant" ||
+      path === "/guardian"
+    ) {
+      return "dashboard";
+    }
 
     const matched = navItems.find((item) => {
-      if (item.href === '/owner' || item.href === '/caretaker') return false;
+      if (
+        item.href === "/owner" ||
+        item.href === "/caretaker" ||
+        item.href === "/tenant" ||
+        item.href === "/guardian"
+      ) {
+        return false;
+      }
       return path === item.href || path.startsWith(`${item.href}/`);
     });
 
     if (matched) return matched.key;
-    if (activeKey === 'home') return 'dashboard';
+    if (activeKey === "home") return "dashboard";
     if (activeKey) return activeKey;
-    return 'dashboard';
+    return "dashboard";
   });
 
   let initials = $derived.by(() => {
-    const parts = (resolvedOwnerName || 'PK').trim().split(/\s+/);
+    const parts = (resolvedOwnerName || "PK").trim().split(/\s+/);
     if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
-    return `${parts[0][0] || ''}${parts[1][0] || ''}`.toUpperCase();
+    return `${parts[0][0] || ""}${parts[1][0] || ""}`.toUpperCase();
   });
 
   /**
@@ -190,11 +273,11 @@
 
     const targetPath = normalizePath(item.href);
 
-    if (typeof onNavigate === 'function') {
+    if (typeof onNavigate === "function") {
       onNavigate({ ...item, href: targetPath });
     }
 
-    if (typeof window !== 'undefined') {
+    if (typeof window !== "undefined") {
       window.location.hash = `#${targetPath}`;
       currentPath = targetPath;
     }
@@ -206,8 +289,8 @@
   function goToProfile(e) {
     if (e) e.preventDefault();
     isProfileMenuOpen = false;
-    if (typeof window !== 'undefined') {
-      window.location.hash = '#/profile';
+    if (typeof window !== "undefined") {
+      window.location.hash = "#/profile";
     }
   }
 
@@ -224,20 +307,26 @@
    * @param {KeyboardEvent} e
    */
   function handleBackdropKeydown(e) {
-    if (e.key === 'Escape') {
+    if (e.key === "Escape") {
       isMobileMenuOpen = false;
     }
   }
 </script>
 
-<div class="owner-layout" data-mobile={isMobileViewport ? 'true' : 'false'}>
+<div
+  class="owner-layout"
+  data-mobile={isMobileViewport ? "true" : "false"}
+  data-page-title={title || undefined}
+>
   <!-- 1. NAVBAR ATAS -->
   <header class="navbar-bar" aria-label="Navbar {resolvedOwnerRole}">
     <div class="navbar-brand-group">
       <button
         type="button"
         class="mobile-burger-btn mobile-only"
-        aria-label={isMobileMenuOpen ? 'Tutup menu navigasi' : 'Buka menu navigasi'}
+        aria-label={isMobileMenuOpen
+          ? "Tutup menu navigasi"
+          : "Buka menu navigasi"}
         aria-expanded={isMobileMenuOpen}
         onclick={toggleMobileMenu}
       >
@@ -341,13 +430,18 @@
 
   <!-- 2. AREA BAWAH: SIDEBAR + KONTEN HALAMAN -->
   <div class="workspace-container">
-    <aside class="sidebar-panel desktop-only" aria-label="Sidebar {resolvedOwnerRole}">
+    <aside
+      class="sidebar-panel desktop-only"
+      aria-label="Sidebar {resolvedOwnerRole}"
+    >
       <nav class="sidebar-menu">
         {#each navItems as item (item.key)}
           <a
             href="#{item.href}"
-            class="sidebar-item {resolvedActiveKey === item.key ? 'active' : ''}"
-            aria-current={resolvedActiveKey === item.key ? 'page' : undefined}
+            class="sidebar-item {resolvedActiveKey === item.key
+              ? 'active'
+              : ''}"
+            aria-current={resolvedActiveKey === item.key ? "page" : undefined}
             onclick={(e) => navigateTo(e, item)}
           >
             {item.label}
@@ -370,7 +464,8 @@
           transition:fly={{ x: -250, duration: 240, easing: cubicOut }}
         >
           <div class="mobile-drawer-header">
-            <span class="mobile-drawer-title">Navigasi {resolvedOwnerRole}</span>
+            <span class="mobile-drawer-title">Navigasi {resolvedOwnerRole}</span
+            >
             <button
               type="button"
               class="mobile-drawer-close"
@@ -384,8 +479,12 @@
             {#each navItems as item (item.key)}
               <a
                 href="#{item.href}"
-                class="sidebar-item {resolvedActiveKey === item.key ? 'active' : ''}"
-                aria-current={resolvedActiveKey === item.key ? 'page' : undefined}
+                class="sidebar-item {resolvedActiveKey === item.key
+                  ? 'active'
+                  : ''}"
+                aria-current={resolvedActiveKey === item.key
+                  ? "page"
+                  : undefined}
                 onclick={(e) => navigateTo(e, item)}
               >
                 {item.label}
@@ -422,7 +521,7 @@
   .owner-layout :global(select),
   .owner-layout :global(textarea),
   .owner-layout :global(a) {
-    font-family: 'Inter', sans-serif;
+    font-family: "Inter", sans-serif;
   }
 
   .mobile-only {
@@ -517,7 +616,9 @@
     color: #261a14;
     cursor: pointer;
     text-align: left;
-    transition: background-color 0.18s ease, transform 0.16s ease;
+    transition:
+      background-color 0.18s ease,
+      transform 0.16s ease;
   }
 
   .profile-trigger:hover {
@@ -565,7 +666,7 @@
     transition: transform 0.2s cubic-bezier(0.22, 1, 0.36, 1);
   }
 
-  .profile-trigger[aria-expanded='true'] .profile-chevron {
+  .profile-trigger[aria-expanded="true"] .profile-chevron {
     transform: rotate(180deg);
   }
 
@@ -599,7 +700,9 @@
     font-weight: 500;
     text-decoration: none;
     box-sizing: border-box;
-    transition: background-color 0.16s ease, transform 0.14s ease;
+    transition:
+      background-color 0.16s ease,
+      transform 0.14s ease;
   }
 
   .profile-btn-outline:hover {
@@ -624,7 +727,9 @@
     font-size: 13px;
     font-weight: 600;
     cursor: pointer;
-    transition: background-color 0.16s ease, transform 0.14s ease;
+    transition:
+      background-color 0.16s ease,
+      transform 0.14s ease;
   }
 
   .logout-wrapper :global(button:hover) {
@@ -666,7 +771,8 @@
     color: #6f5d50;
     text-decoration: none;
     line-height: 1.35;
-    transition: background-color 0.2s cubic-bezier(0.22, 1, 0.36, 1),
+    transition:
+      background-color 0.2s cubic-bezier(0.22, 1, 0.36, 1),
       color 0.2s cubic-bezier(0.22, 1, 0.36, 1),
       transform 0.2s cubic-bezier(0.22, 1, 0.36, 1);
   }
@@ -754,7 +860,9 @@
       align-items: center;
       justify-content: center;
       cursor: pointer;
-      transition: background-color 0.16s ease, transform 0.15s ease;
+      transition:
+        background-color 0.16s ease,
+        transform 0.15s ease;
     }
 
     .mobile-burger-btn:active {

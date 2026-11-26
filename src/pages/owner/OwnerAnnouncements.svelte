@@ -52,8 +52,6 @@
   let errorMsg = $state("");
   /** @type {AnnouncementViewModel[]} */
   let announcements = $state([]);
-  /** @type {AnnouncementViewModel[]} */
-  let allCategorySnapshot = $state([]);
   let totalCount = $state(0);
   let allTotalCount = $state(0);
   let totalPages = $state(1);
@@ -140,21 +138,56 @@
   }
 
   /**
+   * @param {number} baseAllTotal
+   */
+  async function syncAllCategoryCountsFallback(baseAllTotal) {
+    try {
+      /** @type {[any, any, any]} */
+      const [urgentRes, routineRes, maintenanceRes] = await Promise.all([
+        apiRequest("/api/announcements?page=1&limit=1&category=urgent"),
+        apiRequest("/api/announcements?page=1&limit=1&category=routine"),
+        apiRequest("/api/announcements?page=1&limit=1&category=maintenance"),
+      ]);
+
+      const urgent = Number(
+        urgentRes?.meta?.total ?? urgentRes?.pagination?.total ?? 0,
+      );
+      const routine = Number(
+        routineRes?.meta?.total ?? routineRes?.pagination?.total ?? 0,
+      );
+      const maintenance = Number(
+        maintenanceRes?.meta?.total ?? maintenanceRes?.pagination?.total ?? 0,
+      );
+
+      categoryCounts = {
+        all: Number.isFinite(baseAllTotal)
+          ? baseAllTotal
+          : urgent + routine + maintenance,
+        urgent: Number.isFinite(urgent) ? urgent : 0,
+        routine: Number.isFinite(routine) ? routine : 0,
+        maintenance: Number.isFinite(maintenance) ? maintenance : 0,
+      };
+    } catch {
+      // Biarkan nilai fallback yang sudah ada jika gagal
+    }
+  }
+
+  /**
+   * Sync category counts according to API metadata contract
    * @param {any} response
    * @param {AnnouncementViewModel[]} mappedList
    */
   function syncCategoryCounts(response, mappedList) {
     const apiCounts =
-      response?.counts || response?.meta?.counts || response?.summary;
+      response?.meta?.counts || response?.counts || response?.summary;
+    const metaObj = response?.meta || response?.pagination;
+
     if (apiCounts && typeof apiCounts === "object") {
       const urgent = Number(apiCounts.urgent ?? 0);
       const routine = Number(apiCounts.routine ?? 0);
       const maintenance = Number(apiCounts.maintenance ?? 0);
       const all = Number(
-        apiCounts.all ??
-          apiCounts.total ??
-          response?.pagination?.total ??
-          mappedList.length,
+        apiCounts.all ?? apiCounts.total ?? metaObj?.total ?? mappedList.length,
       );
       categoryCounts = {
         all: Number.isFinite(all) ? all : 0,
@@ -165,35 +198,24 @@
       return;
     }
 
+    const countForCurrentTab = Number(metaObj?.total ?? mappedList.length);
     if (selectedCategory === "all") {
-      const sourceForCounts =
-        allCategorySnapshot.length > 0 ? allCategorySnapshot : mappedList;
-      let urgent = 0;
-      let routine = 0;
-      let maintenance = 0;
-      for (const item of sourceForCounts) {
-        if (item.category === "urgent") urgent += 1;
-        else if (item.category === "routine") routine += 1;
-        else if (item.category === "maintenance") maintenance += 1;
-      }
-      const totalAll = Number(response?.pagination?.total ?? mappedList.length);
-      categoryCounts = {
-        all: Number.isFinite(totalAll) ? totalAll : mappedList.length,
-        urgent,
-        routine,
-        maintenance,
-      };
-    } else {
-      const countForCurrentTab = Number(
-        response?.pagination?.total ?? mappedList.length,
-      );
       categoryCounts = {
         ...categoryCounts,
-        [selectedCategory]: Number.isFinite(countForCurrentTab)
+        all: Number.isFinite(countForCurrentTab)
           ? countForCurrentTab
           : mappedList.length,
       };
+      syncAllCategoryCountsFallback(countForCurrentTab);
+      return;
     }
+
+    categoryCounts = {
+      ...categoryCounts,
+      [selectedCategory]: Number.isFinite(countForCurrentTab)
+        ? countForCurrentTab
+        : mappedList.length,
+    };
   }
 
   async function fetchAnnouncements() {
@@ -205,28 +227,27 @@
       if (selectedCategory !== "all") {
         queryParams += `&category=${selectedCategory}`;
       }
+      if (searchQuery.trim()) {
+        queryParams += `&q=${encodeURIComponent(searchQuery.trim())}`;
+      }
 
       /** @type {any} */
       const response = await apiRequest(`/api/announcements${queryParams}`);
-      if (response && response.success) {
+      if (response && (response.success || response.data)) {
         const mapped = (response.data || []).map(
           /** @param {AnnouncementApiItem} item */ (item) =>
             mapAnnouncementItem(item),
         );
         announcements = mapped;
 
-        const fetchedTotal = response.pagination?.total ?? announcements.length;
+        const metaObj = response.meta || response.pagination || {};
+        const fetchedTotal = metaObj.total ?? announcements.length;
         totalCount = fetchedTotal;
         totalPages =
-          response.pagination?.total_pages ||
-          Math.ceil(totalCount / perPage) ||
-          1;
+          metaObj.total_pages || Math.ceil(totalCount / perPage) || 1;
 
-        if (selectedCategory === "all") {
+        if (selectedCategory === "all" && !searchQuery.trim()) {
           allTotalCount = fetchedTotal;
-          if (currentPage === 1) {
-            allCategorySnapshot = mapped;
-          }
         }
 
         syncCategoryCounts(response, mapped);
@@ -238,18 +259,14 @@
     }
   }
 
-  let filteredItems = $derived.by(() => {
-    const keyword = searchQuery.trim().toLowerCase();
-    if (!keyword) return announcements;
-
-    return announcements.filter((item) => {
-      return (
-        (item.title && item.title.toLowerCase().includes(keyword)) ||
-        (item.content && item.content.toLowerCase().includes(keyword)) ||
-        (item.excerpt && item.excerpt.toLowerCase().includes(keyword))
-      );
-    });
-  });
+  let searchTimeout = $state(/** @type {any} */ (null));
+  function handleSearchInput() {
+    if (searchTimeout) clearTimeout(searchTimeout);
+    searchTimeout = setTimeout(() => {
+      currentPage = 1;
+      fetchAnnouncements();
+    }, 300);
+  }
 
   /**
    * @param {'all' | 'urgent' | 'routine' | 'maintenance'} categoryKey
@@ -606,6 +623,7 @@
               type="text"
               class="mobile-search-input"
               bind:value={searchQuery}
+              oninput={handleSearchInput}
               placeholder="Cari judul atau isi pengumuman..."
               aria-label="Cari judul atau isi pengumuman"
             />
@@ -729,7 +747,7 @@
               >Coba Lagi</button
             >
           </div>
-        {:else if announcements.length === 0 && selectedCategory === "all" && allTotalCount === 0}
+        {:else if announcements.length === 0 && selectedCategory === "all" && allTotalCount === 0 && !searchQuery.trim()}
           <!-- STATE PENGUMUMAN KOSONG AKTUAL DATABASE -->
           <div class="empty-state-center" in:fade={{ duration: 160 }}>
             <section
@@ -776,7 +794,7 @@
             class="mobile-only mobile-cards-list"
             in:fade={{ duration: 160 }}
           >
-            {#each filteredItems as item (item.id)}
+            {#each announcements as item (item.id)}
               <article class="mobile-announcement-card">
                 <button
                   type="button"
@@ -824,7 +842,7 @@
               </p>
             </div>
 
-            {#if filteredItems.length === 0}
+            {#if announcements.length === 0}
               <div class="empty-inline">
                 Tidak ada pengumuman pada kategori ini.
               </div>
@@ -841,7 +859,7 @@
                     </tr>
                   </thead>
                   <tbody>
-                    {#each filteredItems as item (item.id)}
+                    {#each announcements as item (item.id)}
                       <tr>
                         <td class="cell-title">{item.title}</td>
                         <td>
