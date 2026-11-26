@@ -21,12 +21,14 @@
     "Desember",
   ];
 
-  let ticketStatusFilter = $state("active"); // 'active' | 'all' | 'resolved'
+  // 'active' (pending + in_progress) | 'all' | 'pending' | 'in_progress' | 'resolved'
+  let ticketStatusFilter = $state("active");
 
   let summaryLoading = $state(true);
   let summaryError = $state("");
   /** @type {any} */
   let summaryData = $state(null);
+  let activeContractsTotal = $state(0);
 
   let ticketsLoading = $state(true);
   let ticketsError = $state("");
@@ -61,17 +63,13 @@
     if (Number.isFinite(fromSummary) && summaryData?.active_tickets) {
       return fromSummary;
     }
-    return formattedTickets.filter(
-      (t) => t.rawStatus !== "resolved" && t.rawStatus !== "selesai",
-    ).length;
+    return formattedTickets.filter((t) => t.rawStatus !== "resolved").length;
   });
 
-  let activeContractsCount = $derived.by(() => {
-    const c = summaryData?.active_contracts ?? summaryData?.contracts;
-    if (typeof c === "number") return Number.isFinite(c) ? c : 0;
-    const countVal = Number(c?.count ?? c?.active ?? 0);
-    return Number.isFinite(countVal) ? countVal : 0;
-  });
+  let activeContractsCount = $derived(Number(activeContractsTotal ?? 0));
+  let pendingContractsCount = $derived(
+    Number(summaryData?.pending_contracts ?? 0),
+  );
 
   /**
    * @param {Event | null} event
@@ -104,13 +102,10 @@
   function getTicketStatusInfo(status) {
     switch (String(status || "").toLowerCase()) {
       case "pending":
-      case "menunggu konfirmasi":
         return { label: "Menunggu Konfirmasi", type: "pending" };
       case "in_progress":
-      case "diproses":
         return { label: "Diproses", type: "progress" };
       case "resolved":
-      case "selesai":
         return { label: "Selesai", type: "done" };
       default:
         return { label: status || "Menunggu Konfirmasi", type: "pending" };
@@ -125,7 +120,7 @@
           ticket.ticket_number ||
           `T-${String(ticket.id ?? idx + 1).padStart(4, "0")}`,
         rawId: ticket.id,
-        roomNumber: ticket.room_number || ticket.room?.room_number || "-",
+        roomNumber: ticket.room_number || "-",
         category: ticket.category || "Lainnya",
         reportedAt: formatDate(ticket.created_at),
         status: statusInfo.label,
@@ -135,54 +130,72 @@
     }),
   );
 
-  let filteredTickets = $derived.by(() => {
-    if (ticketStatusFilter === "active") {
-      return formattedTickets.filter(
-        (t) => t.rawStatus !== "resolved" && t.rawStatus !== "selesai",
-      );
-    }
-    if (ticketStatusFilter === "resolved") {
-      return formattedTickets.filter(
-        (t) => t.rawStatus === "resolved" || t.rawStatus === "selesai",
-      );
-    }
-    return formattedTickets;
-  });
-
   async function loadCaretakerSummary() {
     summaryLoading = true;
     summaryError = "";
 
     try {
-      /** @type {any} */
-      const response = await apiRequest("/api/dashboard/summary");
+      const [summaryRes, contractsRes] = await Promise.all([
+        apiRequest("/api/dashboard/summary"),
+        apiRequest("/api/contracts?status=active&limit=1&page=1"),
+      ]);
+
       summaryData =
-        response?.data && typeof response.data === "object"
-          ? response.data
-          : response || null;
+        summaryRes?.data && typeof summaryRes.data === "object"
+          ? summaryRes.data
+          : summaryRes || null;
+
+      activeContractsTotal = Number(contractsRes?.meta?.total ?? 0);
     } catch (/** @type {any} */ error) {
       summaryData = null;
-      summaryError = error?.message || "";
+      activeContractsTotal = 0;
+      summaryError =
+        error?.data?.pesan ||
+        error?.message ||
+        "Gagal memuat ringkasan operasional.";
     } finally {
       summaryLoading = false;
     }
   }
 
-  async function loadTickets() {
+  /**
+   * @param {string} filterVal
+   */
+  async function loadTickets(filterVal = ticketStatusFilter) {
     ticketsLoading = true;
     ticketsError = "";
 
     try {
+      const params = new URLSearchParams();
+      params.set("page", "1");
+      params.set("limit", "10");
+
+      if (
+        filterVal === "pending" ||
+        filterVal === "in_progress" ||
+        filterVal === "resolved"
+      ) {
+        params.set("status", filterVal);
+      }
+
       /** @type {any} */
-      const response = await apiRequest("/api/tickets?limit=10");
-      ticketsList = Array.isArray(response?.data)
-        ? response.data
-        : Array.isArray(response)
-          ? response
-          : [];
+      const response = await apiRequest(`/api/tickets?${params.toString()}`);
+      const rawItems = Array.isArray(response?.data) ? response.data : [];
+
+      if (filterVal === "active") {
+        ticketsList = rawItems.filter(
+          (/** @type {any} */ item) =>
+            String(item?.status || "").toLowerCase() !== "resolved",
+        );
+      } else {
+        ticketsList = rawItems;
+      }
     } catch (/** @type {any} */ error) {
       ticketsList = [];
-      ticketsError = error?.message || "";
+      ticketsError =
+        error?.data?.pesan ||
+        error?.message ||
+        "Gagal memuat antrean tiket komplain.";
     } finally {
       ticketsLoading = false;
     }
@@ -190,7 +203,7 @@
 
   function handleReloadAll() {
     loadCaretakerSummary();
-    loadTickets();
+    loadTickets(ticketStatusFilter);
   }
 
   /**
@@ -201,9 +214,13 @@
     window.location.hash = `#${item.href}`;
   }
 
+  $effect(() => {
+    const currentFilter = ticketStatusFilter;
+    loadTickets(currentFilter);
+  });
+
   onMount(() => {
     loadCaretakerSummary();
-    loadTickets();
   });
 </script>
 
@@ -283,7 +300,7 @@
         <div class="kpi-subtext">
           {summaryLoading
             ? "Memuat data kontrak..."
-            : `${activeContractsCount} kontrak berjalan aktif`}
+            : `${activeContractsCount} kontrak berjalan aktif · ${pendingContractsCount} menunggu`}
         </div>
         <a
           href="#/caretaker/contracts"
@@ -307,6 +324,8 @@
           >
             <option value="active">Status: Aktif</option>
             <option value="all">Status: Semua</option>
+            <option value="pending">Status: Menunggu Konfirmasi</option>
+            <option value="in_progress">Status: Diproses</option>
             <option value="resolved">Status: Selesai</option>
           </select>
         </div>
@@ -321,7 +340,7 @@
           <div class="table-state-message" in:fade={{ duration: 160 }}>
             {ticketsError}
           </div>
-        {:else if filteredTickets.length === 0}
+        {:else if formattedTickets.length === 0}
           <div class="table-state-message" in:fade={{ duration: 160 }}>
             Tidak ada tiket komplain.
           </div>
@@ -338,7 +357,7 @@
               </tr>
             </thead>
             <tbody>
-              {#each filteredTickets as ticket (ticket.id)}
+              {#each formattedTickets as ticket (ticket.id)}
                 <tr>
                   <td class="cell-strong">{ticket.id}</td>
                   <td>{ticket.roomNumber}</td>
@@ -387,15 +406,18 @@
   }
 
   .page-title {
-    margin: 0 0 4px;
-    font-size: 24px;
+    margin: 0 0 6px;
+    font-size: 26px;
     font-weight: 700;
+    line-height: 1.25;
+    letter-spacing: -0.01em;
     color: #261a14;
   }
 
   .page-subtitle {
     margin: 0;
-    font-size: 12px;
+    font-size: 13px;
+    line-height: 1.5;
     color: #9e8b7c;
   }
 
@@ -605,7 +627,13 @@
 
   @media (max-width: 768px) {
     .page-title {
-      font-size: 21px;
+      font-size: 26px;
+      line-height: 1.25;
+    }
+
+    .page-subtitle {
+      font-size: 12px;
+      line-height: 1.5;
     }
   }
 </style>

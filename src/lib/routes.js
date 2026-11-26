@@ -13,6 +13,11 @@ import OwnerFinanceReport from "../pages/owner/OwnerFinanceReport.svelte";
 
 // 3. PAGE PENGELOLA (CARETAKER)
 import CaretakerHome from "../pages/caretaker/CaretakerHome.svelte";
+import CaretakerAnnouncements from "../pages/caretaker/CaretakerAnnouncements.svelte";
+import CaretakerMaintenanceReports from "../pages/caretaker/CaretakerMaintenanceReports.svelte";
+import CaretakerRooms from "../pages/caretaker/CaretakerRooms.svelte";
+import CaretakerUsers from "../pages/caretaker/CaretakerUsers.svelte";
+import CaretakerContracts from "../pages/caretaker/CaretakerContracts.svelte";
 
 // 4. PAGE PENYEWA (TENANT)
 import TenantHome from "../pages/tenant/TenantHome.svelte";
@@ -126,6 +131,66 @@ const caretakerRoute = wrap({
   },
 });
 
+const caretakerAnnouncementsRoute = wrap({
+  component: CaretakerAnnouncements,
+  conditions: [
+    () => {
+      return get(isAuthenticated) && hasRole("caretaker");
+    },
+  ],
+  userData: {
+    role: "caretaker",
+  },
+});
+
+const caretakerMaintenanceRoute = wrap({
+  component: CaretakerMaintenanceReports,
+  conditions: [
+    () => {
+      return get(isAuthenticated) && hasRole("caretaker");
+    },
+  ],
+  userData: {
+    role: "caretaker",
+  },
+});
+
+const caretakerRoomsRoute = wrap({
+  component: CaretakerRooms,
+  conditions: [
+    () => {
+      return get(isAuthenticated) && hasRole("caretaker");
+    },
+  ],
+  userData: {
+    role: "caretaker",
+  },
+});
+
+const caretakerUsersRoute = wrap({
+  component: CaretakerUsers,
+  conditions: [
+    () => {
+      return get(isAuthenticated) && hasRole("caretaker");
+    },
+  ],
+  userData: {
+    role: "caretaker",
+  },
+});
+
+const caretakerContractsRoute = wrap({
+  component: CaretakerContracts,
+  conditions: [
+    () => {
+      return get(isAuthenticated) && hasRole("caretaker");
+    },
+  ],
+  userData: {
+    role: "caretaker",
+  },
+});
+
 // --- Guard Rute Penyewa ---
 const tenantRoute = wrap({
   component: TenantHome,
@@ -214,6 +279,11 @@ const routes = {
 
   // Page Pengelola
   "/caretaker": caretakerRoute,
+  "/caretaker/announcements": caretakerAnnouncementsRoute,
+  "/caretaker/maintenance": caretakerMaintenanceRoute,
+  "/caretaker/rooms": caretakerRoomsRoute,
+  "/caretaker/users": caretakerUsersRoute,
+  "/caretaker/contracts": caretakerContractsRoute,
 
   // Page Penyewa
   "/tenant": tenantRoute,

@@ -1260,8 +1260,42 @@
           >
         </div>
       {:else if reports.length === 0}
-        <div class="state-card" in:fade={{ duration: 160 }}>
-          Belum ada laporan kerusakan yang ditemukan.
+        <!-- EMPTY STATE LAPORAN KERUSAKAN FIGMA -->
+        <div class="empty-tickets-wrap" in:fade={{ duration: 160 }}>
+          <div class="empty-tickets-card">
+            <div class="empty-inbox-circle" aria-hidden="true">
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="20"
+                height="20"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              >
+                <polyline points="22 12 16 12 14 15 10 15 8 12 2 12"></polyline>
+                <path
+                  d="M5.45 5.11L2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"
+                ></path>
+              </svg>
+            </div>
+
+            <h2 class="empty-tickets-title">Tidak ada tiket kerusakan aktif</h2>
+            <p class="empty-tickets-desc">
+              Semua laporan fasilitas telah diselesaikan dengan baik oleh tim
+              pengelola.
+            </p>
+          </div>
+
+          <button
+            type="button"
+            class="btn-history-completed"
+            onclick={() => selectStatusTab("completed")}
+          >
+            Lihat Riwayat Selesai
+          </button>
         </div>
       {:else}
         <!-- DAFTAR KARTU LAPORAN (MOBILE) -->
@@ -1423,6 +1457,71 @@
     flex-direction: column;
     align-items: center;
     gap: 12px;
+  }
+
+  /* --- EMPTY STATE FIGMA LAPORAN KERUSAKAN --- */
+  .empty-tickets-wrap {
+    padding: 24px 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 12px;
+    width: 100%;
+  }
+
+  .empty-tickets-card {
+    width: 100%;
+    max-width: 420px;
+    padding: 36px 24px;
+    border-radius: 12px;
+    border: 1px solid #ece3d9;
+    background-color: #ffffff;
+    text-align: center;
+    box-sizing: border-box;
+  }
+
+  .empty-inbox-circle {
+    width: 44px;
+    height: 44px;
+    margin: 0 auto 14px;
+    border-radius: 999px;
+    background-color: #f3ede6;
+    color: #7c6858;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .empty-tickets-title {
+    margin: 0 0 8px;
+    font-size: 15px;
+    font-weight: 700;
+    color: #261a14;
+  }
+
+  .empty-tickets-desc {
+    margin: 0 auto;
+    max-width: 280px;
+    font-size: 12px;
+    line-height: 1.5;
+    color: #9e8b7c;
+  }
+
+  .btn-history-completed {
+    width: 100%;
+    max-width: 420px;
+    height: 40px;
+    border: 1px solid #e4dad0;
+    border-radius: 8px;
+    background-color: #ffffff;
+    color: #261a14;
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+
+  .btn-history-completed:hover {
+    background-color: #faf7f2;
   }
 
   .btn-retry {
