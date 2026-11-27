@@ -699,8 +699,20 @@
               type="button"
               class="mobile-photo-trigger"
               onclick={openPhotoPreview}
+              title="Klik untuk memperbesar foto"
             >
-              Lihat Foto Bukti Kendala
+              {#if photoBlobLoading}
+                <span>Memuat...</span>
+              {:else if photoObjectUrl}
+                <img
+                  src={photoObjectUrl}
+                  alt="Foto bukti kendala {selectedReport.ticketCode}"
+                  class="photo-thumb-img"
+                />
+              {:else}
+                <span>Foto</span>
+                <small>{selectedReport.photoCaption}</small>
+              {/if}
             </button>
           {/if}
 
@@ -2460,15 +2472,36 @@
     }
 
     .mobile-photo-trigger {
+      display: inline-flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
       width: 100%;
-      height: 36px;
-      border: 1px solid #e2d8cd;
+      height: 160px;
+      border: 1px solid #dfd3c5;
       border-radius: 8px;
-      background-color: #f6f0e8;
+      background-color: #e9dfd4;
       color: #5a3e28;
+      font-family: inherit;
       font-size: 11px;
       font-weight: 600;
+      gap: 2px;
       cursor: pointer;
+      overflow: hidden;
+      padding: 0;
+      transition:
+        background-color 0.15s ease,
+        transform 0.15s ease;
+    }
+
+    .mobile-photo-trigger:hover {
+      background-color: #dfd2c3;
+      transform: translateY(-1px);
+    }
+
+    .mobile-photo-trigger small {
+      font-size: 9px;
+      color: #8f7b6b;
     }
 
     .mobile-status-box {
