@@ -463,7 +463,6 @@
           wardFilteredList.find((/** @type {any} */ inv) =>
             isUnpaidInvoice(inv),
           ) ||
-          wardFilteredList[0] ||
           null;
       } else {
         const reason = /** @type {any} */ (invoicesRes.reason);
@@ -590,7 +589,6 @@
       list.find((/** @type {Record<string, any>} */ inv) =>
         isUnpaidInvoice(inv),
       ) ||
-      list[0] ||
       null;
   }
 

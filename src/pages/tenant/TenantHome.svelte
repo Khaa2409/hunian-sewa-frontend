@@ -206,7 +206,6 @@
           iVal?.active_invoice ||
           iVal?.current_invoice ||
           invList.find((/** @type {any} */ inv) => isUnpaidInvoice(inv)) ||
-          invList[0] ||
           null;
       }
 

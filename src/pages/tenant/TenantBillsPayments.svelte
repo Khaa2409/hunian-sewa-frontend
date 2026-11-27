@@ -366,7 +366,6 @@
         activeBill =
           explicitActive ||
           rawList.find((/** @type {any} */ inv) => isUnpaidInvoice(inv)) ||
-          rawList[0] ||
           null;
 
         const meta = iVal?.meta || {};
