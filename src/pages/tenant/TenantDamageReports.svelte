@@ -4,7 +4,8 @@
   import { get } from "svelte/store";
   import { fade, fly } from "svelte/transition";
   import DashboardLayout from "../../layouts/DashboardLayout.svelte";
-  import { apiRequest } from "../../services/api.js";
+  import { apiRequest, API_BASE_URL } from "../../services/api.js";
+  import { getToken } from "../../services/token.js";
   import { currentUser } from "../../stores/auth.js";
 
   /** @type {Record<string, any> | null} */
@@ -49,15 +50,23 @@
   /** @type {HTMLInputElement | null} */
   let photoInputRef = $state(null);
 
+  // Foto bukti (blob terotorisasi, bukan URL publik)
+  let photoObjectUrl = $state("");
+  let photoBlobLoading = $state(false);
+  let photoBlobError = $state("");
+  let activePhotoFetchSeq = 0;
+
   // Komentar / Diskusi Tiket
   let commentInput = $state("");
 
+  // Samakan dengan CATEGORIES backend (ticket/controller.js)
   const categoryOptions = [
-    "AC",
     "Listrik",
     "Air",
-    "Wi-Fi / Internet",
-    "Furniture / Kamar",
+    "Internet",
+    "AC",
+    "Furnitur",
+    "Kebersihan",
     "Lainnya",
   ];
 
@@ -188,6 +197,7 @@
   function extractPhotoUrl(raw) {
     if (!raw || typeof raw !== "object") return "";
     const candidate =
+      raw.photo_path ||
       raw.photo_url ||
       raw.image_url ||
       raw.evidence_url ||
@@ -202,6 +212,88 @@
       return candidate.url || candidate.photo_url || candidate.image_url || "";
     }
     return "";
+  }
+
+  /**
+   * @param {string | null | undefined} rawPhoto
+   * @returns {string}
+   */
+  function resolvePhotoEndpoint(rawPhoto) {
+    const trimmed = String(rawPhoto || "").trim();
+    if (!trimmed) return "";
+    if (trimmed.startsWith("blob:") || trimmed.startsWith("data:")) {
+      return trimmed;
+    }
+    const endpointMatch = trimmed.match(/\/api\/files\/([^/?#]+)/);
+    if (endpointMatch && endpointMatch[1]) {
+      return `${API_BASE_URL}/api/files/${encodeURIComponent(decodeURIComponent(endpointMatch[1]))}`;
+    }
+    const filename = trimmed.split("/").pop() || "";
+    return filename
+      ? `${API_BASE_URL}/api/files/${encodeURIComponent(filename)}`
+      : "";
+  }
+
+  function revokeCurrentPhotoUrl() {
+    if (
+      photoObjectUrl &&
+      typeof URL !== "undefined" &&
+      photoObjectUrl.startsWith("blob:")
+    ) {
+      URL.revokeObjectURL(photoObjectUrl);
+    }
+    photoObjectUrl = "";
+  }
+
+  /**
+   * @param {string | null | undefined} rawPhoto
+   */
+  async function loadProtectedPhoto(rawPhoto) {
+    const seq = ++activePhotoFetchSeq;
+    revokeCurrentPhotoUrl();
+    photoBlobError = "";
+
+    const targetPath = resolvePhotoEndpoint(rawPhoto);
+    if (!targetPath) {
+      photoBlobLoading = false;
+      return;
+    }
+
+    if (targetPath.startsWith("blob:") || targetPath.startsWith("data:")) {
+      photoObjectUrl = targetPath;
+      photoBlobLoading = false;
+      return;
+    }
+
+    photoBlobLoading = true;
+    try {
+      const token = getToken();
+      /** @type {Record<string, string>} */
+      const headers = {};
+      if (token) {
+        headers.Authorization = `Bearer ${token}`;
+      }
+
+      const res = await fetch(targetPath, { headers });
+      if (!res.ok) {
+        throw new Error(`Gagal memuat foto (HTTP ${res.status})`);
+      }
+
+      const blobResult = await res.blob();
+      if (seq !== activePhotoFetchSeq) return;
+
+      if (typeof URL !== "undefined") {
+        photoObjectUrl = URL.createObjectURL(blobResult);
+      }
+    } catch (/** @type {any} */ err) {
+      if (seq === activePhotoFetchSeq) {
+        photoBlobError = err?.message || "Gagal memuat foto bukti kendala.";
+      }
+    } finally {
+      if (seq === activePhotoFetchSeq) {
+        photoBlobLoading = false;
+      }
+    }
   }
 
   /**
@@ -457,9 +549,14 @@
     } finally {
       detailLoading = false;
     }
+
+    await loadProtectedPhoto(extractPhotoUrl(current));
   }
 
   function backToList() {
+    activePhotoFetchSeq += 1;
+    revokeCurrentPhotoUrl();
+    photoBlobError = "";
     viewMode = "list";
     selectedReport = null;
     detailError = "";
@@ -674,6 +771,8 @@
 
     return () => {
       window.removeEventListener("resize", syncViewportState);
+      activePhotoFetchSeq += 1;
+      revokeCurrentPhotoUrl();
     };
   });
 </script>
@@ -765,11 +864,17 @@
             {#if photoUrl}
               <div class="detail-section-block">
                 <span class="meta-lbl">Foto bukti kendala</span>
-                <img
-                  src={photoUrl}
-                  alt="Foto bukti kerusakan"
-                  class="detail-photo-img"
-                />
+                {#if photoBlobLoading}
+                  <p class="dr-muted">Memuat foto...</p>
+                {:else if photoObjectUrl}
+                  <img
+                    src={photoObjectUrl}
+                    alt="Foto bukti kerusakan"
+                    class="detail-photo-img"
+                  />
+                {:else if photoBlobError}
+                  <p class="dr-muted">{photoBlobError}</p>
+                {/if}
               </div>
             {/if}
 
