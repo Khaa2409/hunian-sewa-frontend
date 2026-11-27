@@ -72,6 +72,7 @@
       user?.room?.name ||
       user?.contract?.room_number ||
       user?.active_contract?.room_number ||
+      root?.contract?.room_number ||
       root?.room_number ||
       root?.room?.room_number ||
       "";
