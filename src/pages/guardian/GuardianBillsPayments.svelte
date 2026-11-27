@@ -585,6 +585,13 @@
   function handleWardSelectChange() {
     currentPage = 1;
     selectedPeriod = "all";
+    const list = wardInvoices;
+    activeBill =
+      list.find((/** @type {Record<string, any>} */ inv) =>
+        isUnpaidInvoice(inv),
+      ) ||
+      list[0] ||
+      null;
   }
 
   function handlePeriodSelectChange() {
