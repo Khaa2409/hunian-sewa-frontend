@@ -2,7 +2,8 @@
   // @ts-check
   import { onMount } from "svelte";
   import { get } from "svelte/store";
-  import { fade, fly } from "svelte/transition";
+  import { fade, fly, scale } from "svelte/transition";
+  import { cubicOut } from "svelte/easing";
   import DashboardLayout from "../../layouts/DashboardLayout.svelte";
   import { apiRequest, API_BASE_URL } from "../../services/api.js";
   import { getToken } from "../../services/token.js";
@@ -51,6 +52,7 @@
   let photoInputRef = $state(null);
 
   // Foto bukti (blob terotorisasi, bukan URL publik)
+  let isPhotoModalOpen = $state(false);
   let photoObjectUrl = $state("");
   let photoBlobLoading = $state(false);
   let photoBlobError = $state("");
@@ -296,6 +298,14 @@
     }
   }
 
+  function openPhotoPreview() {
+    isPhotoModalOpen = true;
+  }
+
+  function closePhotoPreview() {
+    isPhotoModalOpen = false;
+  }
+
   /**
    * @param {Record<string, any> | null | undefined} item
    * @returns {Array<Record<string, any>>}
@@ -502,6 +512,7 @@
     selectedReport = current;
     detailError = "";
     commentInput = "";
+    isPhotoModalOpen = false;
     viewMode = "detail";
 
     const id = getReportId(item);
@@ -555,6 +566,7 @@
 
   function backToList() {
     activePhotoFetchSeq += 1;
+    isPhotoModalOpen = false;
     revokeCurrentPhotoUrl();
     photoBlobError = "";
     viewMode = "list";
@@ -867,11 +879,19 @@
                 {#if photoBlobLoading}
                   <p class="dr-muted">Memuat foto...</p>
                 {:else if photoObjectUrl}
-                  <img
-                    src={photoObjectUrl}
-                    alt="Foto bukti kerusakan"
-                    class="detail-photo-img"
-                  />
+                  <button
+                    type="button"
+                    class="detail-photo-btn"
+                    onclick={openPhotoPreview}
+                    title="Klik untuk memperbesar foto"
+                    aria-label="Perbesar foto bukti kendala"
+                  >
+                    <img
+                      src={photoObjectUrl}
+                      alt="Foto bukti kerusakan"
+                      class="detail-photo-img"
+                    />
+                  </button>
                 {:else if photoBlobError}
                   <p class="dr-muted">{photoBlobError}</p>
                 {/if}
@@ -948,6 +968,63 @@
           </section>
       </div>
     </div>
+
+    {#if isPhotoModalOpen && photoObjectUrl}
+      <div
+        class="photo-modal-backdrop"
+        transition:fade={{ duration: 160 }}
+        onclick={closePhotoPreview}
+        role="presentation"
+      ></div>
+      <div
+        class="photo-modal-card"
+        role="dialog"
+        aria-modal="true"
+        aria-label="Pratinjau Foto Bukti Kendala"
+        transition:scale={{ start: 0.96, duration: 180, easing: cubicOut }}
+      >
+        <div class="photo-modal-top">
+          <div>
+            <h3 class="photo-modal-title">
+              Bukti Kendala · {getTicketCode(selectedReport)}
+            </h3>
+            <p class="photo-modal-sub">
+              {selectedReport.category || "Laporan Kerusakan"}
+            </p>
+          </div>
+          <button
+            type="button"
+            class="photo-modal-close"
+            onclick={closePhotoPreview}
+            aria-label="Tutup pratinjau foto"
+          >
+            &times;
+          </button>
+        </div>
+
+        <div class="photo-preview-stage">
+          <img
+            src={photoObjectUrl}
+            alt="Bukti kendala {getTicketCode(selectedReport)}"
+            class="photo-full-img"
+          />
+          <p class="photo-preview-caption">{selectedReport.description || "-"}</p>
+          <span class="photo-preview-hint"
+            >Dilaporkan pada {formatTanggal(
+              selectedReport.created_at || selectedReport.reported_at,
+            )}</span
+          >
+        </div>
+
+        <div class="photo-modal-footer">
+          <button
+            type="button"
+            class="photo-modal-done-btn"
+            onclick={closePhotoPreview}>Tutup</button
+          >
+        </div>
+      </div>
+    {/if}
   {:else}
     <div in:fade={{ duration: 200 }} class="dr-page-stack">
       <!-- Top Header -->
@@ -1724,6 +1801,23 @@
     color: #3b2e25;
   }
 
+  .detail-photo-btn {
+    display: block;
+    padding: 0;
+    border: none;
+    background: transparent;
+    cursor: pointer;
+    border-radius: 10px;
+    transition:
+      transform 0.15s ease,
+      filter 0.15s ease;
+  }
+
+  .detail-photo-btn:hover {
+    transform: translateY(-1px);
+    filter: brightness(0.96);
+  }
+
   .detail-photo-img {
     margin-top: 6px;
     max-width: 100%;
@@ -1731,6 +1825,106 @@
     border-radius: 10px;
     border: 1px solid #eae2d7;
     object-fit: cover;
+  }
+
+  .photo-modal-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 80;
+    background-color: rgba(24, 18, 14, 0.55);
+  }
+
+  .photo-modal-card {
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    z-index: 90;
+    width: 92%;
+    max-width: 520px;
+    padding: 20px 22px;
+    border-radius: 14px;
+    background-color: #ffffff;
+    box-shadow: 0 16px 40px rgba(24, 18, 14, 0.24);
+    box-sizing: border-box;
+  }
+
+  .photo-modal-top {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 14px;
+  }
+
+  .photo-modal-title {
+    margin: 0 0 2px;
+    font-size: 15px;
+    font-weight: 700;
+    color: #261a14;
+  }
+
+  .photo-modal-sub {
+    margin: 0;
+    font-size: 11px;
+    color: #9e8b7c;
+  }
+
+  .photo-modal-close {
+    border: none;
+    background: transparent;
+    font-size: 22px;
+    color: #8c7b6e;
+    cursor: pointer;
+    line-height: 1;
+  }
+
+  .photo-preview-stage {
+    padding: 24px 20px;
+    border: 1px dashed #d6c8b9;
+    border-radius: 10px;
+    background-color: #f6f0e8;
+    text-align: center;
+  }
+
+  .photo-full-img {
+    max-width: 100%;
+    max-height: 280px;
+    border-radius: 8px;
+    object-fit: contain;
+    margin-bottom: 12px;
+    display: block;
+    margin-inline: auto;
+  }
+
+  .photo-preview-caption {
+    margin: 0 0 6px;
+    font-size: 12px;
+    line-height: 1.5;
+    color: #261a14;
+  }
+
+  .photo-preview-hint {
+    font-size: 11px;
+    color: #9e8b7c;
+  }
+
+  .photo-modal-footer {
+    display: flex;
+    justify-content: flex-end;
+    margin-top: 16px;
+  }
+
+  .photo-modal-done-btn {
+    height: 34px;
+    padding: 0 16px;
+    border: 1px solid #e2d8cd;
+    border-radius: 8px;
+    background-color: #ffffff;
+    color: #261a14;
+    font-size: 12px;
+    font-weight: 500;
+    cursor: pointer;
   }
 
   .discussion-thread-box {
