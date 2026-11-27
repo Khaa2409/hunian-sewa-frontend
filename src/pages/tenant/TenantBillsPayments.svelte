@@ -74,20 +74,17 @@
   }
 
   /**
-   * Mengonversi teks label/tanggal periode ke format YYYY-MM untuk server
-   * @param {string} periodStr
+   * Kunci periode YYYY-MM untuk query server
+   * @param {Record<string, any>} item
    */
-  function parsePeriodToQuery(periodStr) {
-    if (!periodStr || periodStr === "all") return "";
-    if (/^\d{4}-\d{2}$/.test(periodStr)) return periodStr;
-
-    const parsed = new Date(periodStr);
-    if (!Number.isNaN(parsed.getTime())) {
-      const year = parsed.getFullYear();
-      const month = String(parsed.getMonth() + 1).padStart(2, "0");
-      return `${year}-${month}`;
-    }
-    return "";
+  function getPeriodKey(item) {
+    const rawPeriod = String(item?.periode || item?.period || "").trim();
+    if (/^\d{4}-\d{2}$/.test(rawPeriod)) return rawPeriod;
+    const rawDate =
+      item?.period_start || item?.due_date || item?.billing_date || item?.created_at;
+    if (!rawDate) return "";
+    const match = String(rawDate).match(/^(\d{4})-(\d{2})/);
+    return match ? `${match[1]}-${match[2]}` : "";
   }
 
   /**
@@ -115,8 +112,20 @@
    */
   function getPeriodLabel(item) {
     if (item?.period_label) return String(item.period_label);
-    if (item?.period) return String(item.period);
-    if (item?.billing_period) return String(item.billing_period);
+    const rawPeriod = String(
+      item?.periode || item?.period || item?.billing_period || "",
+    ).trim();
+    if (/^\d{4}-\d{2}$/.test(rawPeriod)) {
+      const [y, m] = rawPeriod.split("-").map(Number);
+      const d = new Date(y, (m || 1) - 1, 1);
+      if (!Number.isNaN(d.getTime())) {
+        return new Intl.DateTimeFormat("id-ID", {
+          month: "long",
+          year: "numeric",
+        }).format(d);
+      }
+    }
+    if (rawPeriod) return rawPeriod;
     const rawDate =
       item?.period_start || item?.due_date || item?.billing_date || item?.created_at;
     if (!rawDate) return "-";
@@ -245,16 +254,20 @@
   }
 
   let periodOptions = $derived.by(() => {
-    /** @type {Set<string>} */
-    const set = new Set();
+    /** @type {Map<string, string>} */
+    const map = new Map();
     const add = (/** @type {Record<string, any> | null | undefined} */ item) => {
-      const p = getPeriodLabel(item);
-      if (p && p !== "-") set.add(p);
+      const key = getPeriodKey(item);
+      const label = getPeriodLabel(item);
+      if (key && label && label !== "-") map.set(key, label);
     };
     add(activeBill);
     for (const inv of periodSourceInvoices) add(inv);
     for (const inv of invoices) add(inv);
-    return Array.from(set);
+    return Array.from(map.entries()).map(([value, label]) => ({
+      value,
+      label,
+    }));
   });
 
   /**
@@ -316,7 +329,7 @@
       params.set("page", String(currentPage));
       params.set("limit", String(perPage));
 
-      const pQuery = parsePeriodToQuery(selectedPeriod);
+      const pQuery = selectedPeriod === "all" ? "" : selectedPeriod;
       if (pQuery) {
         params.set("periode", pQuery);
       }
@@ -739,8 +752,8 @@
               aria-label="Filter periode riwayat pembayaran"
             >
               <option value="all">Periode: Semua</option>
-              {#each periodOptions as period}
-                <option value={period}>{period}</option>
+              {#each periodOptions as opt (opt.value)}
+                <option value={opt.value}>{opt.label}</option>
               {/each}
             </select>
           </div>

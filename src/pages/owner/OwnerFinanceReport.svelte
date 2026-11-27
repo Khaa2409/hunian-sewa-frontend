@@ -4,7 +4,7 @@
   import { cubicOut } from "svelte/easing";
   import DashboardLayout from "../../layouts/DashboardLayout.svelte";
   import { currentUser } from "../../stores/auth.js";
-  import { apiRequest } from "../../services/api.js";
+  import { apiRequest, API_BASE_URL } from "../../services/api.js";
   import { getToken } from "../../services/token.js";
 
   /**
@@ -82,6 +82,7 @@
   let hasError = $state(false);
   let errorMessage = $state("");
   let downloadingReport = $state(false);
+  let downloadError = $state("");
   let currentPage = $state(1);
   const pageSize = 10;
 
@@ -374,6 +375,7 @@
     if (typeof window === "undefined" || downloadingReport) return;
 
     downloadingReport = true;
+    downloadError = "";
     try {
       const periodQuery = encodeURIComponent(selectedPeriod);
       const token = getToken();
@@ -384,7 +386,7 @@
       }
 
       const res = await fetch(
-        `/api/reports/financial/export?periode=${periodQuery}`,
+        `${API_BASE_URL}/api/reports/financial/export?periode=${periodQuery}`,
         { headers },
       );
       if (!res.ok) {
@@ -416,7 +418,7 @@
       link.remove();
       URL.revokeObjectURL(url);
     } catch (/** @type {any} */ err) {
-      window.alert(err?.message || "Gagal mengunduh laporan keuangan.");
+      downloadError = err?.message || "Gagal mengunduh laporan keuangan.";
     } finally {
       downloadingReport = false;
     }
@@ -503,6 +505,12 @@
         {downloadingReport ? "Mengunduh..." : "Unduh Laporan"}
       </button>
     </div>
+
+    {#if downloadError}
+      <div class="download-feedback" role="alert">
+        {downloadError}
+      </div>
+    {/if}
 
     {#if loading}
       <div class="state-card" in:fade={{ duration: 160 }}>
@@ -1579,5 +1587,15 @@
       font-weight: 700;
       color: #261a14;
     }
+  }
+
+  .download-feedback {
+    margin: 8px 0 0;
+    padding: 10px 14px;
+    border-radius: 8px;
+    border: 1px solid #d9a7a0;
+    background: #fbeeec;
+    color: #8a2f26;
+    font-size: 13px;
   }
 </style>

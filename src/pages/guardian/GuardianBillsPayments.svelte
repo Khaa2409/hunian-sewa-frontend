@@ -27,9 +27,6 @@
   /** @type {Array<Record<string, any>>} */
   let invoices = $state([]);
 
-  /** @type {Array<Record<string, any>>} */
-  let periodSourceInvoices = $state([]);
-
   /** @type {Record<string, any> | null} */
   let activeBill = $state(null);
 
@@ -42,8 +39,6 @@
   let selectedPeriod = $state("all");
   let currentPage = $state(1);
   const perPage = 10;
-  let totalCount = $state(0);
-  let totalPages = $state(1);
 
   let loading = $state(true);
   let isInitiatingPayment = $state(false);
@@ -322,6 +317,28 @@
     );
   }
 
+  let wardInvoices = $derived(invoices.filter(isInvoiceOfActiveWard));
+
+  let periodFilteredInvoices = $derived.by(() => {
+    if (selectedPeriod === "all") return wardInvoices;
+    return wardInvoices.filter(
+      (/** @type {Record<string, any>} */ inv) =>
+        getPeriodKey(inv) === selectedPeriod,
+    );
+  });
+
+  let totalCount = $derived(periodFilteredInvoices.length);
+  let totalPages = $derived(
+    Math.max(1, Math.ceil(totalCount / perPage)),
+  );
+
+  let filteredInvoices = $derived(
+    periodFilteredInvoices.slice(
+      (currentPage - 1) * perPage,
+      currentPage * perPage,
+    ),
+  );
+
   let periodOptions = $derived.by(() => {
     /** @type {Map<string, string>} */
     const map = new Map();
@@ -334,20 +351,11 @@
       }
     };
     add(activeBill);
-    for (const inv of periodSourceInvoices) add(inv);
     for (const inv of invoices) add(inv);
     return Array.from(map.entries()).map(([value, label]) => ({
       value,
       label,
     }));
-  });
-
-  let filteredInvoices = $derived.by(() => {
-    if (selectedPeriod === "all") return invoices;
-    return invoices.filter((inv) => {
-      const key = getPeriodKey(inv);
-      return key === selectedPeriod || getPeriodLabel(inv) === selectedPeriod;
-    });
   });
 
   /**
@@ -376,23 +384,55 @@
     viewMode = "checkout";
   }
 
+  // Ambil semua invoice lintas halaman agar paginasi dihitung di klien
+  async function fetchAllInvoices() {
+    /** @type {Array<Record<string, any>>} */
+    const rows = [];
+    let page = 1;
+    let lastPage = 1;
+    let explicitActive = null;
+
+    do {
+      /** @type {any} */
+      const val = await apiRequest(
+        `/api/invoices?page=${page}&limit=100`,
+        { method: "GET" },
+      );
+      const list = Array.isArray(val?.data)
+        ? val.data
+        : Array.isArray(val?.invoices)
+          ? val.invoices
+          : Array.isArray(val)
+            ? val
+            : [];
+      if (page === 1) {
+        explicitActive =
+          val?.active_invoice && typeof val.active_invoice === "object"
+            ? val.active_invoice
+            : val?.current_invoice && typeof val.current_invoice === "object"
+              ? val.current_invoice
+              : null;
+      }
+      rows.push(...list);
+      const meta = val?.meta || val?.pagination || {};
+      lastPage = Number(meta.total_pages ?? meta.last_page ?? 1);
+      if (list.length === 0) break;
+      page += 1;
+    } while (page <= lastPage && page <= 50);
+
+    return { rows, explicitActive };
+  }
+
   async function fetchBillingData() {
     loading = true;
     errorMessage = "";
     const fallbackUser = get(currentUser);
 
     try {
-      const params = new URLSearchParams();
-      params.set("page", String(currentPage));
-      params.set("limit", String(perPage));
-      if (selectedPeriod && selectedPeriod !== "all") {
-        params.set("periode", selectedPeriod);
-      }
-
       const [profileRes, summaryRes, invoicesRes] = await Promise.allSettled([
         apiRequest("/api/me", { method: "GET" }),
         apiRequest("/api/dashboard/summary", { method: "GET" }),
-        apiRequest(`/api/invoices?${params.toString()}`, { method: "GET" }),
+        fetchAllInvoices(),
       ]);
 
       const pVal = profileRes.status === "fulfilled" ? profileRes.value : null;
@@ -412,54 +452,23 @@
       }
 
       if (invoicesRes.status === "fulfilled") {
-        /** @type {any} */
-        const iVal = invoicesRes.value;
-        const rawList = Array.isArray(iVal?.data)
-          ? iVal.data
-          : Array.isArray(iVal?.invoices)
-            ? iVal.invoices
-            : Array.isArray(iVal)
-              ? iVal
-              : [];
+        const result = invoicesRes.value;
+        invoices = result.rows;
+        if (currentPage > totalPages) currentPage = totalPages;
 
-        const wardFilteredList = rawList.filter(isInvoiceOfActiveWard);
-
-        invoices = wardFilteredList;
-
-        const explicitActive =
-          iVal?.active_invoice && typeof iVal.active_invoice === "object"
-            ? iVal.active_invoice
-            : iVal?.current_invoice && typeof iVal.current_invoice === "object"
-              ? iVal.current_invoice
-              : null;
-
+        const wardFilteredList = invoices.filter(isInvoiceOfActiveWard);
         activeBill =
-          explicitActive ||
+          result.explicitActive ||
           wardFilteredList.find((/** @type {any} */ inv) =>
             isUnpaidInvoice(inv),
           ) ||
           wardFilteredList[0] ||
           null;
-
-        const meta = iVal?.meta || iVal?.pagination || {};
-        totalCount = Number(
-          meta.total ?? iVal?.total ?? wardFilteredList.length,
-        );
-        totalPages = Math.max(
-          1,
-          Number(
-            meta.total_pages ??
-              meta.last_page ??
-              Math.ceil(totalCount / perPage) ??
-              1,
-          ),
-        );
       } else {
         const reason = /** @type {any} */ (invoicesRes.reason);
         invoices = [];
         activeBill = null;
-        totalCount = 0;
-        totalPages = 1;
+        currentPage = 1;
         errorMessage =
           reason?.data?.pesan ||
           reason?.message ||
@@ -468,8 +477,7 @@
     } catch (/** @type {any} */ err) {
       invoices = [];
       activeBill = null;
-      totalCount = 0;
-      totalPages = 1;
+      currentPage = 1;
       errorMessage =
         err?.data?.pesan ||
         err?.message ||
@@ -572,35 +580,15 @@
 
   function handleWardSelectChange() {
     currentPage = 1;
-    fetchBillingData();
+    selectedPeriod = "all";
   }
 
   function handlePeriodSelectChange() {
     currentPage = 1;
-    fetchBillingData();
-  }
-
-  // Ambil seluruh periode anak asuh agar opsi dropdown tidak ikut tersaring
-  async function fetchPeriodOptions() {
-    try {
-      const res = await apiRequest("/api/invoices?limit=100", { method: "GET" });
-      /** @type {any} */
-      const val = res;
-      periodSourceInvoices = Array.isArray(val?.data)
-        ? val.data
-        : Array.isArray(val?.invoices)
-          ? val.invoices
-          : Array.isArray(val)
-            ? val
-            : [];
-    } catch {
-      periodSourceInvoices = [];
-    }
   }
 
   onMount(() => {
     fetchBillingData();
-    fetchPeriodOptions();
   });
 </script>
 
@@ -1033,7 +1021,6 @@
                 onclick={() => {
                   if (currentPage > 1) {
                     currentPage -= 1;
-                    fetchBillingData();
                   }
                 }}
                 disabled={currentPage <= 1}
@@ -1046,7 +1033,6 @@
                 onclick={() => {
                   if (currentPage < totalPages) {
                     currentPage += 1;
-                    fetchBillingData();
                   }
                 }}
                 disabled={currentPage >= totalPages}
