@@ -13,6 +13,9 @@
   /** @type {Array<Record<string, any>>} */
   let invoices = $state([]);
 
+  /** @type {Array<Record<string, any>>} */
+  let periodSourceInvoices = $state([]);
+
   /** @type {Record<string, any> | null} */
   let activeBill = $state(null);
 
@@ -114,8 +117,19 @@
     if (item?.period_label) return String(item.period_label);
     if (item?.period) return String(item.period);
     if (item?.billing_period) return String(item.billing_period);
-    const rawDate = item?.due_date || item?.billing_date || item?.created_at;
+    const rawDate =
+      item?.period_start || item?.due_date || item?.billing_date || item?.created_at;
     if (!rawDate) return "-";
+    const match = String(rawDate).match(/^(\d{4})-(\d{2})/);
+    if (match) {
+      const d = new Date(Number(match[1]), Number(match[2]) - 1, 1);
+      if (!Number.isNaN(d.getTime())) {
+        return new Intl.DateTimeFormat("id-ID", {
+          month: "long",
+          year: "numeric",
+        }).format(d);
+      }
+    }
     const parsed = new Date(rawDate);
     if (Number.isNaN(parsed.getTime())) return String(rawDate);
     return new Intl.DateTimeFormat("id-ID", {
@@ -233,14 +247,13 @@
   let periodOptions = $derived.by(() => {
     /** @type {Set<string>} */
     const set = new Set();
-    if (activeBill) {
-      const p = getPeriodLabel(activeBill);
+    const add = (/** @type {Record<string, any> | null | undefined} */ item) => {
+      const p = getPeriodLabel(item);
       if (p && p !== "-") set.add(p);
-    }
-    for (const inv of invoices) {
-      const p = getPeriodLabel(inv);
-      if (p && p !== "-") set.add(p);
-    }
+    };
+    add(activeBill);
+    for (const inv of periodSourceInvoices) add(inv);
+    for (const inv of invoices) add(inv);
     return Array.from(set);
   });
 
@@ -273,6 +286,24 @@
   function handlePeriodChange() {
     currentPage = 1;
     fetchBillingData();
+  }
+
+  // Ambil seluruh periode milik penyewa agar opsi dropdown tidak ikut tersaring
+  async function fetchPeriodOptions() {
+    try {
+      const res = await apiRequest("/api/invoices?limit=100", { method: "GET" });
+      /** @type {any} */
+      const val = res;
+      periodSourceInvoices = Array.isArray(val?.data)
+        ? val.data
+        : Array.isArray(val?.invoices)
+          ? val.invoices
+          : Array.isArray(val)
+            ? val
+            : [];
+    } catch {
+      periodSourceInvoices = [];
+    }
   }
 
   async function fetchBillingData() {
@@ -444,6 +475,7 @@
 
   onMount(() => {
     fetchBillingData();
+    fetchPeriodOptions();
   });
 </script>
 

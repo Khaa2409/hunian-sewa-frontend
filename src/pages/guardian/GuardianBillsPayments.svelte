@@ -27,6 +27,9 @@
   /** @type {Array<Record<string, any>>} */
   let invoices = $state([]);
 
+  /** @type {Array<Record<string, any>>} */
+  let periodSourceInvoices = $state([]);
+
   /** @type {Record<string, any> | null} */
   let activeBill = $state(null);
 
@@ -145,8 +148,19 @@
       }
     }
     if (rawPeriod) return rawPeriod;
-    const rawDate = item?.due_date || item?.billing_date || item?.created_at;
+    const rawDate =
+      item?.period_start || item?.due_date || item?.billing_date || item?.created_at;
     if (!rawDate) return "-";
+    const match = String(rawDate).match(/^(\d{4})-(\d{2})/);
+    if (match) {
+      const d = new Date(Number(match[1]), Number(match[2]) - 1, 1);
+      if (!Number.isNaN(d.getTime())) {
+        return new Intl.DateTimeFormat("id-ID", {
+          month: "long",
+          year: "numeric",
+        }).format(d);
+      }
+    }
     const parsed = new Date(rawDate);
     if (Number.isNaN(parsed.getTime())) return String(rawDate);
     return new Intl.DateTimeFormat("id-ID", {
@@ -161,8 +175,11 @@
   function getPeriodKey(item) {
     const rawPeriod = String(item?.periode || item?.period || "").trim();
     if (/^\d{4}-\d{2}$/.test(rawPeriod)) return rawPeriod;
-    const rawDate = item?.due_date || item?.billing_date || item?.created_at;
+    const rawDate =
+      item?.period_start || item?.due_date || item?.billing_date || item?.created_at;
     if (!rawDate) return "";
+    const match = String(rawDate).match(/^(\d{4})-(\d{2})/);
+    if (match) return `${match[1]}-${match[2]}`;
     const parsed = new Date(rawDate);
     if (Number.isNaN(parsed.getTime())) return "";
     const y = parsed.getFullYear();
@@ -294,16 +311,31 @@
     }));
   }
 
+  /**
+   * @param {Record<string, any>} inv
+   */
+  function isInvoiceOfActiveWard(inv) {
+    if (!activeWard?.tenantId) return true;
+    const invTenant = inv?.tenant_id ?? inv?.tenant?.id ?? null;
+    return (
+      invTenant === null || String(invTenant) === String(activeWard.tenantId)
+    );
+  }
+
   let periodOptions = $derived.by(() => {
     /** @type {Map<string, string>} */
     const map = new Map();
-    for (const inv of invoices) {
+    const add = (/** @type {Record<string, any> | null | undefined} */ inv) => {
+      if (!inv || !isInvoiceOfActiveWard(inv)) return;
       const key = getPeriodKey(inv);
       const label = getPeriodLabel(inv);
       if (key && label && label !== "-") {
         map.set(key, label);
       }
-    }
+    };
+    add(activeBill);
+    for (const inv of periodSourceInvoices) add(inv);
+    for (const inv of invoices) add(inv);
     return Array.from(map.entries()).map(([value, label]) => ({
       value,
       label,
@@ -390,15 +422,7 @@
               ? iVal
               : [];
 
-        const wardFilteredList = activeWard?.tenantId
-          ? rawList.filter((/** @type {any} */ inv) => {
-              const invTenant = inv?.tenant_id ?? inv?.tenant?.id ?? null;
-              return (
-                invTenant === null ||
-                String(invTenant) === String(activeWard.tenantId)
-              );
-            })
-          : rawList;
+        const wardFilteredList = rawList.filter(isInvoiceOfActiveWard);
 
         invoices = wardFilteredList;
 
@@ -556,8 +580,27 @@
     fetchBillingData();
   }
 
+  // Ambil seluruh periode anak asuh agar opsi dropdown tidak ikut tersaring
+  async function fetchPeriodOptions() {
+    try {
+      const res = await apiRequest("/api/invoices?limit=100", { method: "GET" });
+      /** @type {any} */
+      const val = res;
+      periodSourceInvoices = Array.isArray(val?.data)
+        ? val.data
+        : Array.isArray(val?.invoices)
+          ? val.invoices
+          : Array.isArray(val)
+            ? val
+            : [];
+    } catch {
+      periodSourceInvoices = [];
+    }
+  }
+
   onMount(() => {
     fetchBillingData();
+    fetchPeriodOptions();
   });
 </script>
 
