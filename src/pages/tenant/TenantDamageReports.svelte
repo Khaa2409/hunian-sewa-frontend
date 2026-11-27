@@ -41,9 +41,8 @@
   let formError = $state("");
   let feedbackMessage = $state("");
 
-  // Form Buat Laporan
+  // Form Buat Laporan Kerusakan
   let formCategory = $state("AC");
-  let formTitle = $state("");
   let formDescription = $state("");
   /** @type {File | null} */
   let formPhotoFile = $state(null);
@@ -260,7 +259,7 @@
 
     const q = searchQuery.trim();
     if (q) {
-      params.set("search", q);
+      params.set("q", q);
     }
 
     return await apiRequest(`/api/tickets?${params.toString()}`, {
@@ -291,7 +290,6 @@
     syncViewportState();
     formError = "";
     formCategory = "AC";
-    formTitle = "";
     formDescription = "";
     formPhotoFile = null;
     isDragOverPhoto = false;
@@ -313,9 +311,13 @@
       formPhotoFile = null;
       return;
     }
-    const allowedTypes = ["image/jpeg", "image/png", "image/webp"];
+    const allowedTypes = ["image/jpeg", "image/png"];
     if (!allowedTypes.includes(file.type)) {
-      formError = "Format foto harus JPG, PNG, atau WEBP.";
+      formError = "Format foto harus JPG atau PNG.";
+      return;
+    }
+    if (file.size > 2 * 1024 * 1024) {
+      formError = "Ukuran foto maksimal adalah 2 MB.";
       return;
     }
     formError = "";
@@ -543,11 +545,10 @@
     if (isSubmitting) return;
     formError = "";
 
-    const cleanTitle = formTitle.trim();
     const cleanDesc = formDescription.trim();
 
-    if (!cleanTitle || !cleanDesc) {
-      formError = "Judul keluhan dan deskripsi detail wajib diisi.";
+    if (!cleanDesc) {
+      formError = "Deskripsi kendala wajib diisi.";
       return;
     }
 
@@ -556,7 +557,6 @@
       if (formPhotoFile) {
         const formData = new FormData();
         formData.append("category", formCategory);
-        formData.append("title", cleanTitle);
         formData.append("description", cleanDesc);
         formData.append("photo", formPhotoFile);
 
@@ -569,7 +569,6 @@
           method: "POST",
           body: {
             category: formCategory,
-            title: cleanTitle,
             description: cleanDesc,
           },
         });
@@ -693,7 +692,9 @@
             </div>
 
             <h1 class="detail-title">
-              {selectedReport.title || selectedReport.subject || "-"}
+              {selectedReport.category ||
+                selectedReport.subject ||
+                "Laporan Kerusakan"}
             </h1>
 
             <p class="detail-meta-line">
@@ -1065,7 +1066,7 @@
                 <div class="mobile-dr-top">
                   <div>
                     <h2 class="mobile-dr-title">
-                      {item.title || item.category || "Laporan Kerusakan"}
+                      {item.category || item.title || "Laporan Kerusakan"}
                     </h2>
                     <p class="mobile-dr-sub">
                       Kamar {item.room_number || item.room?.room_number || "-"} &middot;
@@ -1180,19 +1181,6 @@
         </div>
 
         <div class="form-group">
-          <label class="form-label" for="dr-title">Judul Keluhan</label>
-          <input
-            id="dr-title"
-            type="text"
-            class="form-control"
-            bind:value={formTitle}
-            placeholder="Contoh: AC tidak dingin / filter kotor"
-            disabled={isSubmitting}
-            required
-          />
-        </div>
-
-        <div class="form-group">
           <label class="form-label" for="dr-desc">Deskripsi Detail</label>
           <textarea
             id="dr-desc"
@@ -1210,7 +1198,7 @@
             bind:this={photoInputRef}
             id="dr-photo"
             type="file"
-            accept="image/jpeg,image/png,image/webp"
+            accept="image/jpeg,image/png"
             class="sr-file-input"
             onchange={handlePhotoChange}
             disabled={isSubmitting}
@@ -1230,7 +1218,7 @@
             <span class="dropzone-hint-text">
               {formPhotoFile
                 ? formPhotoFile.name
-                : "Opsional. Format JPG/PNG, maks 5MB."}
+                : "Opsional. Format JPG/PNG, maks 2MB."}
             </span>
           </button>
         </div>

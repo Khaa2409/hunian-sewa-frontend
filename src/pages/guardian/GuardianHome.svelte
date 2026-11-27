@@ -8,9 +8,15 @@
 
   /**
    * @typedef {Object} WardItem
-   * @property {string | number} id
+   * @property {string} id
+   * @property {string | number | null} tenantId
+   * @property {string | number | null} contractId
    * @property {string} name
    * @property {string} roomNumber
+   * @property {string} contractStatus
+   * @property {string} nextDueDate
+   * @property {any} badge
+   * @property {any} openInvoice
    */
 
   /**
@@ -39,14 +45,6 @@
   let loading = $state(true);
   let errorMsg = $state("");
 
-  let billTitle = $state("Tagihan");
-  let mobileBillTitle = $state("Tagihan");
-  let dueDateText = $state("–");
-  let dueBadgeText = $state("");
-  let mobileDueBadgeText = $state("");
-  let billAmountText = $state("Rp 0");
-  let hasUnpaidBill = $state(false);
-
   /** @type {AnnouncementItem[]} */
   let announcements = $state([]);
 
@@ -68,12 +66,194 @@
     );
   });
 
+  let activeOpenInvoice = $derived.by(() => {
+    const inv = activeWard?.openInvoice;
+    if (!inv || typeof inv !== "object") return null;
+    return inv;
+  });
+
+  let rawDueDateValue = $derived.by(() => {
+    return activeOpenInvoice?.due_date || activeWard?.nextDueDate || "";
+  });
+
+  let isEmptyDueDate = $derived(!rawDueDateValue);
+
+  let hasUnpaidBill = $derived.by(() => {
+    if (!rawDueDateValue && !activeOpenInvoice) return false;
+    if (activeOpenInvoice) {
+      if (activeOpenInvoice.has_unpaid !== undefined) {
+        return Boolean(activeOpenInvoice.has_unpaid);
+      }
+      const status = String(
+        activeOpenInvoice.status || activeOpenInvoice.payment_status || "",
+      )
+        .trim()
+        .toLowerCase();
+      if (
+        [
+          "paid",
+          "lunas",
+          "settled",
+          "settlement",
+          "capture",
+          "completed",
+        ].includes(status)
+      ) {
+        return false;
+      }
+      const amt = Number(
+        String(
+          activeOpenInvoice.amount ??
+            activeOpenInvoice.total_amount ??
+            activeOpenInvoice.gross_amount ??
+            0,
+        ).replace(/[^\d.-]/g, ""),
+      );
+      if (Number.isFinite(amt) && amt > 0) return true;
+    }
+    return Boolean(rawDueDateValue);
+  });
+
+  let billTitle = $derived.by(() => {
+    if (activeOpenInvoice?.title || activeOpenInvoice?.period_label) {
+      return String(activeOpenInvoice.title || activeOpenInvoice.period_label);
+    }
+    return "Tagihan";
+  });
+
+  let mobileBillTitle = $derived.by(() => {
+    const wardName = activeWard?.name || "";
+    return wardName ? `${billTitle} · ${wardName}` : billTitle;
+  });
+
+  let dueDateText = $derived.by(() => {
+    const textCandidate = activeOpenInvoice?.due_date_text;
+    if (typeof textCandidate === "string" && textCandidate.trim()) {
+      return textCandidate.trim();
+    }
+    if (!rawDueDateValue) return "Belum ada data jatuh tempo.";
+    if (String(rawDueDateValue).toLowerCase().startsWith("jatuh tempo")) {
+      return String(rawDueDateValue);
+    }
+    const formatted = formatShortDate(rawDueDateValue);
+    return formatted !== "–"
+      ? `Jatuh tempo: ${formatted}`
+      : String(rawDueDateValue);
+  });
+
+  let dueBadgeText = $derived.by(() => {
+    const badgeCandidate =
+      activeOpenInvoice?.due_badge ??
+      activeOpenInvoice?.badge ??
+      activeWard?.badge ??
+      null;
+    return resolveBadgeText(badgeCandidate, rawDueDateValue);
+  });
+
+  let mobileDueBadgeText = $derived.by(() => {
+    const mobileCandidate = activeOpenInvoice?.mobile_due_badge ?? dueBadgeText;
+    return resolveBadgeText(mobileCandidate, rawDueDateValue);
+  });
+
+  let billAmountText = $derived.by(() => {
+    if (
+      typeof activeOpenInvoice?.amount_rupiah === "string" &&
+      activeOpenInvoice.amount_rupiah.trim()
+    ) {
+      return activeOpenInvoice.amount_rupiah.trim();
+    }
+    const rawAmt =
+      activeOpenInvoice?.amount ??
+      activeOpenInvoice?.total_amount ??
+      activeOpenInvoice?.gross_amount ??
+      0;
+    return formatRupiah(rawAmt);
+  });
+
+  /**
+   * @param {any} rawBadge
+   * @param {any} dueDateInput
+   * @returns {string}
+   */
+  function resolveBadgeText(rawBadge, dueDateInput) {
+    if (typeof rawBadge === "string") {
+      const trimmed = rawBadge.trim();
+      if (trimmed && trimmed !== "[object Object]") return trimmed;
+    } else if (typeof rawBadge === "number" && Number.isFinite(rawBadge)) {
+      if (rawBadge > 0) return `Jatuh tempo ${rawBadge} hari lagi`;
+      if (rawBadge === 0) return "Jatuh tempo hari ini";
+      return `Terlambat ${Math.abs(rawBadge)} hari`;
+    } else if (rawBadge && typeof rawBadge === "object") {
+      const possibleText =
+        rawBadge.label ||
+        rawBadge.text ||
+        rawBadge.title ||
+        rawBadge.message ||
+        rawBadge.status_label ||
+        "";
+      if (typeof possibleText === "string" && possibleText.trim()) {
+        return possibleText.trim();
+      }
+      const daysVal = Number(
+        rawBadge.days_remaining ??
+          rawBadge.days_left ??
+          rawBadge.diff_days ??
+          rawBadge.days ??
+          NaN,
+      );
+      if (Number.isFinite(daysVal)) {
+        if (daysVal > 0) return `Jatuh tempo ${daysVal} hari lagi`;
+        if (daysVal === 0) return "Jatuh tempo hari ini";
+        return `Terlambat ${Math.abs(daysVal)} hari`;
+      }
+    }
+
+    if (dueDateInput) {
+      const parsed = new Date(dueDateInput);
+      if (!Number.isNaN(parsed.getTime())) {
+        const diffDays = Math.ceil(
+          (parsed.getTime() - Date.now()) / (1000 * 60 * 60 * 24),
+        );
+        if (diffDays > 0) return `Jatuh tempo ${diffDays} hari lagi`;
+        if (diffDays === 0) return "Jatuh tempo hari ini";
+        return `Terlambat ${Math.abs(diffDays)} hari`;
+      }
+    }
+
+    return "";
+  }
+
+  /**
+   * @param {any} item
+   * @returns {boolean}
+   */
+  function isPaidInvoiceItem(item) {
+    if (!item || typeof item !== "object") return false;
+    const rawStatus = String(item?.status || item?.payment_status || "")
+      .trim()
+      .toLowerCase();
+    const paidStatuses = [
+      "paid",
+      "lunas",
+      "settled",
+      "settlement",
+      "capture",
+      "completed",
+      "success",
+    ];
+    return (
+      paidStatuses.includes(rawStatus) ||
+      Boolean(item?.paid_at || item?.payment_date)
+    );
+  }
+
   /**
    * @param {any} val
    */
   function formatRupiah(val) {
-    if (typeof val === "string" && val.trim().startsWith("Rp"))
+    if (typeof val === "string" && val.trim().startsWith("Rp")) {
       return val.trim();
+    }
     const num = Number(String(val ?? 0).replace(/[^\d.-]/g, ""));
     return `Rp ${(Number.isFinite(num) ? num : 0).toLocaleString("id-ID")}`;
   }
@@ -133,105 +313,134 @@
    * @returns {PaymentHistoryItem}
    */
   function normalizePayment(raw, idx) {
+    const periodRaw = String(
+      raw?.period_label ||
+        raw?.period ||
+        raw?.periode ||
+        raw?.month_label ||
+        "",
+    ).trim();
+    let periodFormatted = periodRaw || "–";
+    if (/^\d{4}-\d{2}$/.test(periodRaw)) {
+      const [y, m] = periodRaw.split("-").map(Number);
+      const d = new Date(y, (m || 1) - 1, 1);
+      if (!Number.isNaN(d.getTime())) {
+        periodFormatted = d.toLocaleDateString("id-ID", {
+          month: "long",
+          year: "numeric",
+        });
+      }
+    }
+
     return {
       id: raw?.id ?? idx + 1,
-      period: raw?.period_label || raw?.period || raw?.month_label || "–",
+      period: periodFormatted,
       amount:
         raw?.amount_rupiah ||
-        formatRupiah(raw?.amount ?? raw?.gross_amount ?? 0),
+        formatRupiah(
+          raw?.amount ?? raw?.total_amount ?? raw?.gross_amount ?? 0,
+        ),
       paidDate: formatShortDate(
-        raw?.paid_at || raw?.payment_date || raw?.paidDate,
+        raw?.paid_at || raw?.payment_date || raw?.paidDate || raw?.updated_at,
       ),
-      statusLabel: raw?.status_label || raw?.status || "Lunas",
+      statusLabel: "Lunas",
     };
-  }
-
-  function resetDashboardState() {
-    billTitle = "Tagihan";
-    mobileBillTitle = "Tagihan";
-    dueDateText = "–";
-    dueBadgeText = "";
-    mobileDueBadgeText = "";
-    billAmountText = "Rp 0";
-    hasUnpaidBill = false;
-    announcements = [];
-    paymentHistory = [];
   }
 
   /**
    * @param {any} payload
+   * @returns {WardItem[]}
    */
-  function applyGuardianPayload(payload) {
+  function extractWards(payload) {
     const root =
       payload?.data && typeof payload.data === "object"
         ? payload.data
         : payload;
-    if (!root || typeof root !== "object") {
-      resetDashboardState();
-      return;
-    }
+    const list = Array.isArray(root?.wards) ? root.wards : [];
+    return list.map((/** @type {any} */ w, /** @type {number} */ idx) => {
+      const tenantId = w?.tenant_id ?? null;
+      const contractId = w?.contract_id ?? null;
+      return {
+        id: String(tenantId ?? w?.id ?? contractId ?? idx + 1),
+        tenantId,
+        contractId,
+        name: w?.name || w?.tenant_name || "Penyewa",
+        roomNumber: w?.room_number || w?.room?.room_number || "-",
+        contractStatus: String(w?.contract_status || ""),
+        nextDueDate: w?.next_due_date || "",
+        badge: w?.badge ?? null,
+        openInvoice: w?.open_invoice ?? null,
+      };
+    });
+  }
 
-    if (Array.isArray(root.wards) && root.wards.length > 0) {
-      wards = root.wards.map(
-        (/** @type {any} */ w, /** @type {number} */ idx) => ({
-          id: String(w.id ?? w.tenant_id ?? idx + 1),
-          name: w.name || w.tenant_name || "Penyewa",
-          roomNumber: w.room_number || w.room?.room_number || "-",
-        }),
+  /**
+   * @param {any} res
+   * @returns {any[]}
+   */
+  function extractList(res) {
+    if (Array.isArray(res)) return res;
+    if (Array.isArray(res?.data)) return res.data;
+    if (Array.isArray(res?.data?.items)) return res.data.items;
+    if (Array.isArray(res?.data?.invoices)) return res.data.invoices;
+    if (Array.isArray(res?.data?.announcements)) return res.data.announcements;
+    if (Array.isArray(res?.invoices)) return res.invoices;
+    if (Array.isArray(res?.announcements)) return res.announcements;
+    if (Array.isArray(res?.items)) return res.items;
+    return [];
+  }
+
+  /**
+   * @param {WardItem | null} ward
+   */
+  async function fetchWardSecondaryData(ward) {
+    const queryParts = [];
+    if (
+      ward?.tenantId !== null &&
+      ward?.tenantId !== undefined &&
+      ward?.tenantId !== ""
+    ) {
+      queryParts.push(`tenant_id=${encodeURIComponent(String(ward.tenantId))}`);
+    } else if (
+      ward?.contractId !== null &&
+      ward?.contractId !== undefined &&
+      ward?.contractId !== ""
+    ) {
+      queryParts.push(
+        `contract_id=${encodeURIComponent(String(ward.contractId))}`,
       );
-
-      if (
-        !selectedWardId ||
-        !wards.some((w) => String(w.id) === String(selectedWardId))
-      ) {
-        selectedWardId = String(wards[0].id);
-      }
     }
+    const wardQuery = queryParts.length > 0 ? `?${queryParts.join("&")}` : "";
 
-    const currentWard =
-      wards.find((w) => String(w.id) === String(selectedWardId)) ||
-      wards[0] ||
-      null;
-    const wardName = currentWard?.name || "";
+    const [annResult, invResult] = await Promise.allSettled([
+      apiRequest("/api/announcements"),
+      apiRequest(`/api/invoices${wardQuery}`),
+    ]);
 
-    const bill = root.current_bill || root.bill || root.invoice || null;
-    if (bill && typeof bill === "object") {
-      const rawBillLabel = bill.title || bill.period_label || "Tagihan";
-      billTitle = rawBillLabel;
-      mobileBillTitle = wardName
-        ? `${rawBillLabel} · ${wardName}`
-        : rawBillLabel;
-      dueDateText = bill.due_date_text
-        ? bill.due_date_text
-        : bill.due_date
-          ? `Jatuh tempo: ${formatShortDate(bill.due_date)}`
-          : "–";
-      dueBadgeText = bill.due_badge || "";
-      mobileDueBadgeText = bill.mobile_due_badge || bill.due_badge || "";
-      billAmountText = bill.amount_rupiah || formatRupiah(bill.amount ?? 0);
-      hasUnpaidBill =
-        bill.has_unpaid !== undefined ? Boolean(bill.has_unpaid) : false;
+    if (annResult.status === "fulfilled") {
+      const rawAnn = extractList(annResult.value);
+      announcements = rawAnn.slice(0, 3).map(normalizeAnnouncement);
     } else {
-      billTitle = "Tagihan";
-      mobileBillTitle = wardName ? `Tagihan · ${wardName}` : "Tagihan";
-      dueDateText = "–";
-      dueBadgeText = "";
-      mobileDueBadgeText = "";
-      billAmountText = "Rp 0";
-      hasUnpaidBill = false;
+      announcements = [];
     }
 
-    const rawAnnouncements = Array.isArray(root.announcements)
-      ? root.announcements
-      : [];
-    announcements = rawAnnouncements.slice(0, 3).map(normalizeAnnouncement);
+    if (invResult.status === "fulfilled") {
+      const rawInvoices = extractList(invResult.value);
+      const filteredByWard = ward?.tenantId
+        ? rawInvoices.filter((/** @type {any} */ item) => {
+            const itemTenantId = item?.tenant_id ?? item?.tenant?.id ?? null;
+            return (
+              itemTenantId === null ||
+              String(itemTenantId) === String(ward.tenantId)
+            );
+          })
+        : rawInvoices;
 
-    const rawPayments = Array.isArray(root.payment_history)
-      ? root.payment_history
-      : Array.isArray(root.payments)
-        ? root.payments
-        : [];
-    paymentHistory = rawPayments.slice(0, 3).map(normalizePayment);
+      const paidRows = filteredByWard.filter(isPaidInvoiceItem);
+      paymentHistory = paidRows.slice(0, 3).map(normalizePayment);
+    } else {
+      paymentHistory = [];
+    }
   }
 
   async function fetchGuardianDashboard() {
@@ -239,14 +448,32 @@
     errorMsg = "";
 
     try {
-      const query = selectedWardId
-        ? `?ward_id=${encodeURIComponent(selectedWardId)}`
-        : "";
       /** @type {any} */
-      const res = await apiRequest(`/api/guardian/dashboard${query}`);
-      applyGuardianPayload(res);
+      const summaryRes = await apiRequest("/api/dashboard/summary");
+      const parsedWards = extractWards(summaryRes);
+      wards = parsedWards;
+
+      if (parsedWards.length > 0) {
+        const hasCurrent = parsedWards.some(
+          (w) => String(w.id) === String(selectedWardId),
+        );
+        if (!selectedWardId || !hasCurrent) {
+          selectedWardId = String(parsedWards[0].id);
+        }
+      } else {
+        selectedWardId = "";
+      }
+
+      const currentWard =
+        parsedWards.find((w) => String(w.id) === String(selectedWardId)) ||
+        parsedWards[0] ||
+        null;
+
+      await fetchWardSecondaryData(currentWard);
     } catch (/** @type {any} */ err) {
-      resetDashboardState();
+      wards = [];
+      announcements = [];
+      paymentHistory = [];
       errorMsg = err?.message || "Gagal memuat data dashboard wali.";
     } finally {
       loading = false;
@@ -270,8 +497,13 @@
     window.location.hash = `#${item.href}`;
   }
 
-  function handleWardChange() {
-    fetchGuardianDashboard();
+  async function handleWardChange() {
+    errorMsg = "";
+    const currentWard =
+      wards.find((w) => String(w.id) === String(selectedWardId)) ||
+      wards[0] ||
+      null;
+    await fetchWardSecondaryData(currentWard);
   }
 
   onMount(() => {
@@ -322,9 +554,13 @@
 
     <!-- MOBILE HEADER & WARD SELECTOR -->
     <div class="mobile-only mobile-header-block">
-      <h1 class="mobile-title">Beranda Wali</h1>
+      <h1 class="mobile-title">Halo, {displayGuardianName}</h1>
       <p class="mobile-subtitle">
-        Pantau tagihan sewa dan pengumuman kos anak perwalian.
+        {#if activeWard}
+          Memantau pembayaran sewa {activeWard.name} · Kamar {activeWard.roomNumber}
+        {:else}
+          Pantau tagihan sewa dan pengumuman kos anak perwalian.
+        {/if}
       </p>
 
       {#if wards.length > 0}
@@ -367,22 +603,25 @@
         </div>
 
         <p class="due-period">{billTitle}</p>
-        <div class="due-date-main">{loading ? "Memuat..." : dueDateText}</div>
+        <div
+          class="due-date-main"
+          class:due-date-empty={!loading && isEmptyDueDate}
+        >
+          {loading ? "Memuat..." : dueDateText}
+        </div>
 
         <div class="due-actions">
-          {#if hasUnpaidBill}
-            <button
-              type="button"
-              class="btn-brown-sm"
-              onclick={() => goToPath("#/guardian/bills")}
-            >
-              Bayar Sewa
-            </button>
-          {/if}
+          <button
+            type="button"
+            class="btn-brown-sm"
+            onclick={() => goToPath("#/guardian/bills-payments")}
+          >
+            Bayar Sewa
+          </button>
           <button
             type="button"
             class="btn-link-muted"
-            onclick={() => goToPath("#/guardian/bills")}
+            onclick={() => goToPath("#/guardian/bills-payments")}
           >
             Lihat rincian biaya
           </button>
@@ -395,14 +634,14 @@
           <button
             type="button"
             class="btn-brown-full"
-            onclick={() => goToPath("#/guardian/bills")}
+            onclick={() => goToPath("#/guardian/bills-payments")}
           >
             Bayar Sewa
           </button>
           <button
             type="button"
             class="btn-outline-full"
-            onclick={() => goToPath("#/guardian/bills")}
+            onclick={() => goToPath("#/guardian/bills-payments")}
           >
             Lihat Riwayat Pembayaran
           </button>
@@ -430,7 +669,7 @@
         <button
           type="button"
           class="btn-brown-full"
-          onclick={() => goToPath("#/guardian/bills")}
+          onclick={() => goToPath("#/guardian/bills-payments")}
         >
           Bayar Sewa
         </button>
@@ -442,7 +681,7 @@
           <button
             type="button"
             class="btn-brown-full"
-            onclick={() => goToPath("#/guardian/bills")}
+            onclick={() => goToPath("#/guardian/bills-payments")}
           >
             Lihat Riwayat Pembayaran
           </button>
@@ -514,11 +753,11 @@
       <div class="section-head">
         <h2 class="card-section-title">Riwayat Pembayaran</h2>
         <a
-          href="#/guardian/bills"
+          href="#/guardian/bills-payments"
           class="see-all-link"
           onclick={(e) => {
             e.preventDefault();
-            goToPath("#/guardian/bills");
+            goToPath("#/guardian/bills-payments");
           }}
         >
           Lihat semua &rarr;
@@ -685,6 +924,14 @@
     color: #261a14;
     line-height: 1.25;
     margin-bottom: 16px;
+  }
+
+  .due-date-empty {
+    font-size: 12px;
+    font-weight: 400;
+    color: #9e8b7c;
+    line-height: 1.5;
+    margin-bottom: 18px;
   }
 
   .due-actions {

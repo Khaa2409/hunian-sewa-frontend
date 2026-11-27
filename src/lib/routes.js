@@ -1,6 +1,12 @@
+import { writable, get } from "svelte/store";
+import { wrap } from "svelte-spa-router/wrap";
+import { replace } from "svelte-spa-router";
+
 // 1. LOGIN & HALAMAN UMUM
 import Login from "../pages/auth/Login.svelte";
 import ProfilePage from "../pages/public/ProfilePage.svelte";
+import AccessDenied from "../components/AccessDenied.svelte";
+import AccessDeniedRouteView from "../components/AccessDeniedRouteView.svelte";
 
 // 2. PAGE PEMILIK (OWNER)
 import OwnerHome from "../pages/owner/OwnerHome.svelte";
@@ -27,246 +33,206 @@ import TenantBillsPayments from "../pages/tenant/TenantBillsPayments.svelte";
 
 // 5. PAGE WALI (GUARDIAN)
 import GuardianHome from "../pages/guardian/GuardianHome.svelte";
-
-import { wrap } from "svelte-spa-router/wrap";
-import { get } from "svelte/store";
+import GuardianAnnouncements from "../pages/guardian/GuardianAnnouncements.svelte";
+import GuardianBillsPayments from "../pages/guardian/GuardianBillsPayments.svelte";
 
 import { isAuthenticated, hasRole } from "../stores/auth.js";
+
+export const deniedMetaStore = writable({
+  deniedRole: "",
+  targetPath: "",
+});
+
+/**
+ * Guard untuk rute yang mewajibkan role tertentu.
+ * @param {"tenant" | "guardian" | "caretaker" | "owner"} allowedRole
+ * @param {string} targetPath
+ */
+function createRoleGuard(allowedRole, targetPath) {
+  return () => {
+    if (!get(isAuthenticated)) {
+      replace("/login");
+      return false;
+    }
+
+    if (!hasRole(allowedRole)) {
+      deniedMetaStore.set({
+        deniedRole: allowedRole,
+        targetPath,
+      });
+      replace("/access-denied");
+      return false;
+    }
+
+    return true;
+  };
+}
+
+function authGuard() {
+  if (!get(isAuthenticated)) {
+    replace("/login");
+    return false;
+  }
+
+  return true;
+}
+
+const accessDeniedRoute = wrap({
+  component: AccessDeniedRouteView,
+  conditions: [authGuard],
+});
+
+const notFoundRoute = wrap({
+  component: AccessDenied,
+  props: {
+    variant: "not-found",
+    pageTitle: "Halaman Tidak Ditemukan",
+    title: "Halaman tidak ditemukan",
+    mobileTitle: "Halaman tidak ditemukan",
+    subtitle:
+      "Tautan yang Anda akses mungkin sudah kedaluwarsa atau tidak valid",
+    description:
+      "Tautan yang Anda akses mungkin sudah kedaluwarsa atau alamat URL tidak valid (404).",
+    mobileDescription:
+      "Tautan yang Anda akses mungkin sudah kedaluwarsa atau alamat URL tidak valid (404).",
+  },
+});
 
 // --- Guard Rute Pemilik ---
 const ownerRoute = wrap({
   component: OwnerHome,
-  conditions: [
-    () => {
-      return get(isAuthenticated) && hasRole("owner");
-    },
-  ],
-  userData: {
-    role: "owner",
-  },
+  conditions: [createRoleGuard("owner", "/owner")],
+  userData: { role: "owner" },
 });
 
 const ownerAnnouncementsRoute = wrap({
   component: OwnerAnnouncements,
-  conditions: [
-    () => {
-      return get(isAuthenticated) && hasRole("owner");
-    },
-  ],
-  userData: {
-    role: "owner",
-  },
+  conditions: [createRoleGuard("owner", "/owner/announcements")],
+  userData: { role: "owner" },
 });
 
 const ownerMaintenanceRoute = wrap({
   component: OwnerMaintenanceReports,
-  conditions: [
-    () => {
-      return get(isAuthenticated) && hasRole("owner");
-    },
-  ],
-  userData: {
-    role: "owner",
-  },
+  conditions: [createRoleGuard("owner", "/owner/maintenance")],
+  userData: { role: "owner" },
 });
 
 const ownerRoomsRoute = wrap({
   component: OwnerRooms,
-  conditions: [
-    () => {
-      return get(isAuthenticated) && hasRole("owner");
-    },
-  ],
-  userData: {
-    role: "owner",
-  },
+  conditions: [createRoleGuard("owner", "/owner/rooms")],
+  userData: { role: "owner" },
 });
 
 const ownerUsersRoute = wrap({
   component: OwnerUsers,
-  conditions: [
-    () => {
-      return get(isAuthenticated) && hasRole("owner");
-    },
-  ],
-  userData: {
-    role: "owner",
-  },
+  conditions: [createRoleGuard("owner", "/owner/users")],
+  userData: { role: "owner" },
 });
 
 const ownerContractsRoute = wrap({
   component: OwnerContracts,
-  conditions: [
-    () => {
-      return get(isAuthenticated) && hasRole("owner");
-    },
-  ],
-  userData: {
-    role: "owner",
-  },
+  conditions: [createRoleGuard("owner", "/owner/contracts")],
+  userData: { role: "owner" },
 });
 
 const ownerFinanceRoute = wrap({
   component: OwnerFinanceReport,
-  conditions: [
-    () => {
-      return get(isAuthenticated) && hasRole("owner");
-    },
-  ],
-  userData: {
-    role: "owner",
-  },
+  conditions: [createRoleGuard("owner", "/owner/finance")],
+  userData: { role: "owner" },
 });
 
 // --- Guard Rute Pengelola ---
 const caretakerRoute = wrap({
   component: CaretakerHome,
-  conditions: [
-    () => {
-      return get(isAuthenticated) && hasRole("caretaker");
-    },
-  ],
-  userData: {
-    role: "caretaker",
-  },
+  conditions: [createRoleGuard("caretaker", "/caretaker")],
+  userData: { role: "caretaker" },
 });
 
 const caretakerAnnouncementsRoute = wrap({
   component: CaretakerAnnouncements,
-  conditions: [
-    () => {
-      return get(isAuthenticated) && hasRole("caretaker");
-    },
-  ],
-  userData: {
-    role: "caretaker",
-  },
+  conditions: [createRoleGuard("caretaker", "/caretaker/announcements")],
+  userData: { role: "caretaker" },
 });
 
 const caretakerMaintenanceRoute = wrap({
   component: CaretakerMaintenanceReports,
-  conditions: [
-    () => {
-      return get(isAuthenticated) && hasRole("caretaker");
-    },
-  ],
-  userData: {
-    role: "caretaker",
-  },
+  conditions: [createRoleGuard("caretaker", "/caretaker/maintenance")],
+  userData: { role: "caretaker" },
 });
 
 const caretakerRoomsRoute = wrap({
   component: CaretakerRooms,
-  conditions: [
-    () => {
-      return get(isAuthenticated) && hasRole("caretaker");
-    },
-  ],
-  userData: {
-    role: "caretaker",
-  },
+  conditions: [createRoleGuard("caretaker", "/caretaker/rooms")],
+  userData: { role: "caretaker" },
 });
 
 const caretakerUsersRoute = wrap({
   component: CaretakerUsers,
-  conditions: [
-    () => {
-      return get(isAuthenticated) && hasRole("caretaker");
-    },
-  ],
-  userData: {
-    role: "caretaker",
-  },
+  conditions: [createRoleGuard("caretaker", "/caretaker/users")],
+  userData: { role: "caretaker" },
 });
 
 const caretakerContractsRoute = wrap({
   component: CaretakerContracts,
-  conditions: [
-    () => {
-      return get(isAuthenticated) && hasRole("caretaker");
-    },
-  ],
-  userData: {
-    role: "caretaker",
-  },
+  conditions: [createRoleGuard("caretaker", "/caretaker/contracts")],
+  userData: { role: "caretaker" },
 });
 
 // --- Guard Rute Penyewa ---
 const tenantRoute = wrap({
   component: TenantHome,
-  conditions: [
-    () => {
-      return get(isAuthenticated) && hasRole("tenant");
-    },
-  ],
-  userData: {
-    role: "tenant",
-  },
+  conditions: [createRoleGuard("tenant", "/tenant")],
+  userData: { role: "tenant" },
 });
 
 const tenantAnnouncementsRoute = wrap({
   component: TenantAnnouncements,
-  conditions: [
-    () => {
-      return get(isAuthenticated) && hasRole("tenant");
-    },
-  ],
-  userData: {
-    role: "tenant",
-  },
+  conditions: [createRoleGuard("tenant", "/tenant/announcements")],
+  userData: { role: "tenant" },
 });
 
 const tenantDamageReportsRoute = wrap({
   component: TenantDamageReports,
-  conditions: [
-    () => {
-      return get(isAuthenticated) && hasRole("tenant");
-    },
-  ],
-  userData: {
-    role: "tenant",
-  },
+  conditions: [createRoleGuard("tenant", "/tenant/damage-reports")],
+  userData: { role: "tenant" },
 });
 
 const tenantBillsPaymentsRoute = wrap({
   component: TenantBillsPayments,
-  conditions: [
-    () => {
-      return get(isAuthenticated) && hasRole("tenant");
-    },
-  ],
-  userData: {
-    role: "tenant",
-  },
+  conditions: [createRoleGuard("tenant", "/tenant/bills-payments")],
+  userData: { role: "tenant" },
 });
 
 // --- Guard Rute Wali ---
 const guardianRoute = wrap({
   component: GuardianHome,
-  conditions: [
-    () => {
-      return get(isAuthenticated) && hasRole("guardian");
-    },
-  ],
-  userData: {
-    role: "guardian",
-  },
+  conditions: [createRoleGuard("guardian", "/guardian")],
+  userData: { role: "guardian" },
+});
+
+const guardianAnnouncementsRoute = wrap({
+  component: GuardianAnnouncements,
+  conditions: [createRoleGuard("guardian", "/guardian/announcements")],
+  userData: { role: "guardian" },
+});
+
+const guardianBillsPaymentsRoute = wrap({
+  component: GuardianBillsPayments,
+  conditions: [createRoleGuard("guardian", "/guardian/bills-payments")],
+  userData: { role: "guardian" },
 });
 
 // --- Guard Rute Profil ---
 const profileRoute = wrap({
   component: ProfilePage,
-  conditions: [
-    () => {
-      return get(isAuthenticated);
-    },
-  ],
+  conditions: [authGuard],
 });
 
 const routes = {
-  // Login
+  // Login & Akses
   "/": Login,
   "/login": Login,
+  "/access-denied": accessDeniedRoute,
 
   // Page Pemilik
   "/owner": ownerRoute,
@@ -293,9 +259,14 @@ const routes = {
 
   // Page Wali
   "/guardian": guardianRoute,
+  "/guardian/announcements": guardianAnnouncementsRoute,
+  "/guardian/bills-payments": guardianBillsPaymentsRoute,
 
   // Profil
   "/profile": profileRoute,
+
+  // Fallback 404
+  "*": notFoundRoute,
 };
 
 export default routes;

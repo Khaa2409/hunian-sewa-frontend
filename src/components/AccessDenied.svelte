@@ -4,13 +4,27 @@
   import DashboardLayout from "../layouts/DashboardLayout.svelte";
   import { currentUser } from "../stores/auth.js";
 
+  /**
+   * @type {{
+   *   variant?: "denied" | "not-found",
+   *   pageTitle?: string,
+   *   activeKey?: string,
+   *   title?: string,
+   *   mobileTitle?: string,
+   *   subtitle?: string,
+   *   description?: string,
+   *   mobileDescription?: string,
+   *   homeRoute?: string
+   * }}
+   */
   let {
+    variant = "denied",
     pageTitle = "Akses Terbatas",
     activeKey = "home",
     title = "Halaman ini khusus Pengelola & Pemilik",
     mobileTitle = "Akses Terbatas",
     subtitle = "Anda tidak memiliki izin untuk membuka halaman ini",
-    description = "Halaman ini hanya dapat diakses oleh Pengelola atau Pemilik hunian. Hubungi Pengelola bila Anda memerlukan bantuan.",
+    description = "Halaman pengelola dan pemilik tidak dapat diakses oleh Penyewa maupun Wali. Hubungi Pengelola bila Anda memerlukan bantuan.",
     mobileDescription = "Halaman ini hanya dapat diakses oleh Pengelola atau Pemilik hunian.",
     homeRoute = "",
   } = $props();
@@ -56,14 +70,28 @@
     return () => window.removeEventListener("resize", syncViewport);
   });
 
+  function goToRoute(/** @type {string} */ rawPath) {
+    const target = rawPath.startsWith("/") ? rawPath : `/${rawPath}`;
+    if (typeof window !== "undefined") {
+      const nextHash = `#${target}`;
+      if (window.location.hash === nextHash) {
+        window.dispatchEvent(new HashChangeEvent("hashchange"));
+      } else {
+        window.location.hash = nextHash;
+      }
+      return;
+    }
+    push(target);
+  }
+
   function handleBackHome() {
-    push(resolvedHomeRoute);
+    goToRoute(resolvedHomeRoute);
   }
 
   /** @param {{ href?: string }} item */
   function handleNavigate(item) {
     if (item?.href) {
-      push(item.href);
+      goToRoute(item.href);
     }
   }
 </script>
@@ -76,27 +104,42 @@
   onNavigate={handleNavigate}
 >
   <div class="restricted-page">
-    {#if !isMobileViewport}
-      <div class="restricted-header">
-        <h1 class="restricted-page-title">{pageTitle}</h1>
-        <p class="restricted-page-sub">{subtitle}</p>
-      </div>
-    {/if}
+    <div class="page-header">
+      <h1 class="page-title">{pageTitle}</h1>
+      <p class="page-subtitle">{subtitle}</p>
+    </div>
 
     <div class="restricted-center-wrap">
       <div class="restricted-card">
         <div class="lock-circle" aria-hidden="true">
-          <svg
-            xmlns="http://www.w3.org/2000/svg"
-            width="18"
-            height="18"
-            viewBox="0 0 24 24"
-            fill="currentColor"
-          >
-            <path
-              d="M18 8h-1V6c0-2.76-2.24-5-5-5S7 3.24 7 6v2H6c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V10c0-1.1-.9-2-2-2zm-6 9c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2zm3.1-9H8.9V6c0-1.71 1.39-3.1 3.1-3.1 1.71 0 3.1 1.39 3.1 3.1v2z"
-            />
-          </svg>
+          {#if variant === "not-found"}
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="18"
+              height="18"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <circle cx="11" cy="11" r="8" />
+              <line x1="21" y1="21" x2="16.65" y2="16.65" />
+            </svg>
+          {:else}
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="18"
+              height="18"
+              viewBox="0 0 24 24"
+              fill="currentColor"
+            >
+              <path
+                d="M18 8h-1V6c0-2.76-2.24-5-5-5S7 3.24 7 6v2H6c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V10c0-1.1-.9-2-2-2zm-6 9c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2zm3.1-9H8.9V6c0-1.71 1.39-3.1 3.1-3.1 1.71 0 3.1 1.39 3.1 3.1v2z"
+              />
+            </svg>
+          {/if}
         </div>
 
         <h2 class="restricted-card-title">
@@ -124,26 +167,34 @@
 </DashboardLayout>
 
 <style>
+  .restricted-page,
+  .restricted-page :global(button) {
+    font-family: "Inter", sans-serif;
+  }
+
   .restricted-page {
     min-height: calc(100vh - 110px);
     display: flex;
     flex-direction: column;
   }
 
-  .restricted-header {
-    margin-bottom: 24px;
+  .page-header {
+    margin-bottom: 22px;
   }
 
-  .restricted-page-title {
-    margin: 0 0 4px;
-    font-size: 24px;
+  .page-title {
+    margin: 0 0 6px;
+    font-size: 26px;
     font-weight: 700;
+    line-height: 1.25;
+    letter-spacing: -0.01em;
     color: #261a14;
   }
 
-  .restricted-page-sub {
+  .page-subtitle {
     margin: 0;
-    font-size: 12px;
+    font-size: 13px;
+    line-height: 1.5;
     color: #9e8b7c;
   }
 
@@ -207,6 +258,10 @@
     cursor: pointer;
   }
 
+  .btn-back-brown:hover {
+    background-color: #553c2a;
+  }
+
   .btn-back-mobile {
     width: 100%;
     margin-top: 12px;
@@ -218,5 +273,21 @@
     font-size: 13px;
     font-weight: 600;
     cursor: pointer;
+  }
+
+  .btn-back-mobile:hover {
+    background-color: #faf7f2;
+  }
+
+  @media (max-width: 768px) {
+    .page-title {
+      font-size: 26px;
+      line-height: 1.25;
+    }
+
+    .page-subtitle {
+      font-size: 12px;
+      line-height: 1.5;
+    }
   }
 </style>

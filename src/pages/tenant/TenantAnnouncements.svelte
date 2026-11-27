@@ -342,8 +342,12 @@
       </div>
     </div>
   {:else if mobileDetailOpen && selectedAnnouncement}
-    <!-- MOBILE DETAIL VIEW -->
-    <div in:fly={{ x: 18, duration: 200 }} class="mobile-detail-wrap">
+    <!-- MOBILE DETAIL VIEW (muncul dari bawah ke atas) -->
+    <div
+      in:fly={{ y: 24, duration: 240 }}
+      out:fly={{ y: 20, duration: 180 }}
+      class="mobile-detail-wrap"
+    >
       <button type="button" onclick={backToMobileList} class="btn-back-list">
         &larr; Kembali ke Pengumuman
       </button>
@@ -378,11 +382,14 @@
       </article>
     </div>
   {:else}
-    <div in:fade={{ duration: 200 }} class="ann-page-stack">
+    <div in:fly={{ y: -12, duration: 200 }} class="ann-page-stack">
       <!-- Page Header -->
       <div class="ann-header">
         <h1 class="ann-title">Pengumuman</h1>
-        <p class="ann-subtitle">Informasi resmi dari pengelola kos</p>
+        <p class="ann-subtitle">
+          Informasi resmi dan terbaru seputar jadwal, fasilitas, serta tata
+          tertib kos
+        </p>
       </div>
 
       <!-- Mobile Search Input -->

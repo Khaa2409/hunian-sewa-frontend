@@ -753,6 +753,52 @@
         {/if}
       </div>
     </section>
+
+    <!-- ANTREAN TIKET KOMPLAIN (MOBILE) -->
+    <section
+      class="mobile-panel-card mobile-only"
+      aria-label="Antrean tiket komplain mobile"
+      in:fade={{ duration: 160 }}
+    >
+      <div class="mobile-panel-header">
+        <h2 class="mobile-panel-title">Antrean Tiket Komplain</h2>
+        <select
+          class="filter-select"
+          bind:value={ticketStatusFilter}
+          aria-label="Filter status tiket komplain mobile"
+        >
+          <option value="active">Aktif</option>
+          <option value="all">Semua</option>
+          <option value="resolved">Selesai</option>
+        </select>
+      </div>
+
+      {#if ticketsLoading}
+        <div class="table-state-message">Memuat antrean tiket...</div>
+      {:else if ticketsError}
+        <div class="table-state-message error">{ticketsError}</div>
+      {:else if filteredTickets.length === 0}
+        <div class="table-state-message">Tidak ada tiket komplain.</div>
+      {:else}
+        <div class="mobile-payment-list">
+          {#each filteredTickets.slice(0, 5) as ticket}
+            <div class="mobile-payment-row">
+              <div class="mobile-payment-info">
+                <div class="mobile-payment-name">
+                  {ticket.id} · Kamar {ticket.roomNumber}
+                </div>
+                <div class="mobile-payment-meta">
+                  {ticket.category} · {ticket.reportedAt}
+                </div>
+              </div>
+              <span class="status-badge {ticket.statusType}"
+                >{ticket.status}</span
+              >
+            </div>
+          {/each}
+        </div>
+      {/if}
+    </section>
   </div>
 </DashboardLayout>
 
@@ -1070,13 +1116,6 @@
       color: #261a14;
     }
 
-    .mobile-page-subtitle {
-      margin: 0;
-      font-size: 12px;
-      line-height: 1.5;
-      color: #9e8b7c;
-    }
-
     .mobile-kpi-card {
       padding: 18px;
       border: 1px solid #ece3d9;
@@ -1116,6 +1155,7 @@
       border: 1px solid #ece3d9;
       border-radius: 12px;
       background-color: #ffffff;
+      margin-bottom: 18px;
     }
 
     .mobile-panel-header {

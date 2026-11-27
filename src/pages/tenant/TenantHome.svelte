@@ -26,7 +26,7 @@
   let errorMessage = $state("");
 
   /**
-   * Mengambil string tanggal lokal hari ini (misal: "Kamis, 26 November 2026")
+   * Mengambil string tanggal lokal hari ini (misal: "Jumat, 27 November 2026")
    */
   function getTodayFormatted() {
     return new Intl.DateTimeFormat("id-ID", {
@@ -71,8 +71,30 @@
     const raw = String(item?.status || item?.payment_status || "")
       .trim()
       .toLowerCase();
-    return !["paid", "lunas", "settlement", "capture", "completed"].includes(
-      raw,
+    return ![
+      "paid",
+      "lunas",
+      "settlement",
+      "capture",
+      "completed",
+      "cancelled",
+      "canceled",
+      "dibatalkan",
+    ].includes(raw);
+  }
+
+  /**
+   * @param {Record<string, any>} ticket
+   */
+  function isActiveTicket(ticket) {
+    const raw = String(ticket?.status || "")
+      .trim()
+      .toLowerCase();
+    return (
+      raw === "pending" ||
+      raw === "in_progress" ||
+      raw === "diproses" ||
+      raw === "processing"
     );
   }
 
@@ -123,40 +145,40 @@
         ticketRes,
       ] = await Promise.allSettled([
         apiRequest("/api/me", { method: "GET" }),
-        apiRequest(buildQueryPath("/api/contracts", { limit: 1 }), {
-          method: "GET",
-        }),
+        apiRequest("/api/contracts/me", { method: "GET" }),
         apiRequest(buildQueryPath("/api/invoices", { limit: 5 }), {
           method: "GET",
         }),
         apiRequest(buildQueryPath("/api/announcements", { limit: 3 }), {
           method: "GET",
         }),
-        apiRequest(
-          buildQueryPath("/api/maintenance-reports", {
-            status: "active",
-            limit: 3,
-          }),
-          {
-            method: "GET",
-          },
-        ),
+        apiRequest(buildQueryPath("/api/tickets", { limit: 3 }), {
+          method: "GET",
+        }),
       ]);
 
       // 1. Profil Penyewa (Dari /api/me)
       const pVal = profileRes.status === "fulfilled" ? profileRes.value : null;
       profile = pVal?.data ?? pVal?.user ?? pVal ?? fallbackUser ?? null;
 
-      // 2. Kontrak Sewa & Tagihan Berjalan
+      // 2. Kontrak Sewa Milik Tenant (GET /api/contracts/me → filter status === "active")
       const cVal =
         contractsRes.status === "fulfilled" ? contractsRes.value : null;
       const contractList = Array.isArray(cVal?.data)
         ? cVal.data
-        : Array.isArray(cVal)
-          ? cVal
-          : [];
+        : Array.isArray(cVal?.contracts)
+          ? cVal.contracts
+          : Array.isArray(cVal)
+            ? cVal
+            : [];
 
-      activeContract = contractList[0] || null;
+      activeContract =
+        contractList.find(
+          (/** @type {any} */ c) =>
+            String(c?.status || "")
+              .trim()
+              .toLowerCase() === "active",
+        ) || null;
 
       if (activeContract) {
         if (
@@ -197,13 +219,19 @@
           ? aVal
           : [];
 
-      // 4. Tiket Laporan Kerusakan
+      // 4. Tiket Laporan Aktif (Dari /api/tickets?limit=3 → status pending / in_progress)
       const tVal = ticketRes.status === "fulfilled" ? ticketRes.value : null;
-      activeTickets = Array.isArray(tVal?.data)
+      const rawTickets = Array.isArray(tVal?.data)
         ? tVal.data
-        : Array.isArray(tVal)
-          ? tVal
-          : [];
+        : Array.isArray(tVal?.tickets)
+          ? tVal.tickets
+          : Array.isArray(tVal)
+            ? tVal
+            : [];
+
+      activeTickets = rawTickets
+        .filter((/** @type {any} */ t) => isActiveTicket(t))
+        .slice(0, 3);
     } catch (/** @type {any} */ err) {
       profile = fallbackUser ?? null;
       announcements = [];

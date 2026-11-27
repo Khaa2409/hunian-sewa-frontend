@@ -1,4 +1,5 @@
 <script>
+  import { onMount } from "svelte";
   import DashboardLayout from "../../layouts/DashboardLayout.svelte";
   import { currentUser } from "../../stores/auth.js";
   import { apiRequest } from "../../services/api.js";
@@ -13,6 +14,8 @@
 
   let nameInput = $state($currentUser?.name || "");
   let phoneInput = $state(getUserPhone($currentUser));
+  let roomInput = $state("");
+  let relationInput = $state("");
 
   let currentPassword = $state("");
   let newPassword = $state("");
@@ -31,10 +34,111 @@
   let passwordFeedback = $state("");
   let passwordError = $state(false);
 
+  let normalizedRole = $derived.by(() => {
+    const r = String($currentUser?.role || "").toLowerCase();
+    if (r === "guardian" || r === "wali") return "guardian";
+    if (r === "tenant" || r === "penyewa") return "tenant";
+    if (r === "owner" || r === "pemilik") return "owner";
+    if (r === "caretaker" || r === "manager" || r === "pengelola") {
+      return "caretaker";
+    }
+    return r;
+  });
+
+  let showRoomAndRelation = $derived(
+    normalizedRole === "guardian" || normalizedRole === "tenant",
+  );
+
+  let relationLabel = $derived(
+    normalizedRole === "guardian" ? "Penyewa" : "Wali",
+  );
+
+  /**
+   * @param {any} user
+   * @param {any} summaryPayload
+   */
+  function syncRoomAndRelation(user, summaryPayload) {
+    const root =
+      summaryPayload?.data && typeof summaryPayload.data === "object"
+        ? summaryPayload.data
+        : summaryPayload;
+    const wards = Array.isArray(root?.wards) ? root.wards : [];
+    const firstWard = wards[0] || null;
+
+    const roomVal =
+      user?.room_number ||
+      user?.room?.room_number ||
+      user?.room?.name ||
+      user?.contract?.room_number ||
+      user?.active_contract?.room_number ||
+      root?.room_number ||
+      root?.room?.room_number ||
+      firstWard?.room_number ||
+      firstWard?.room?.room_number ||
+      "";
+
+    roomInput = String(roomVal || "").trim() || "-";
+
+    if (normalizedRole === "guardian") {
+      const wardNames = wards
+        .map((/** @type {any} */ w) => w?.name || w?.tenant_name)
+        .filter(Boolean);
+      const wardVal =
+        user?.ward_name ||
+        user?.tenant_name ||
+        user?.ward?.name ||
+        (wardNames.length > 0 ? wardNames.join(", ") : "") ||
+        root?.ward_name ||
+        "";
+      relationInput = String(wardVal || "").trim() || "-";
+    } else if (normalizedRole === "tenant") {
+      const guardianVal =
+        user?.guardian_name ||
+        user?.wali_name ||
+        user?.guardian?.name ||
+        user?.wali?.name ||
+        user?.contract?.guardian_name ||
+        root?.guardian_name ||
+        "";
+      relationInput = String(guardianVal || "").trim() || "-";
+    } else {
+      relationInput = "";
+    }
+  }
+
   $effect(() => {
     if ($currentUser) {
       nameInput = $currentUser.name || "";
       phoneInput = getUserPhone($currentUser);
+      syncRoomAndRelation($currentUser, null);
+    }
+  });
+
+  onMount(async () => {
+    if (!showRoomAndRelation) return;
+    try {
+      const [meRes, summaryRes] = await Promise.allSettled([
+        apiRequest("/api/me", { method: "GET" }),
+        apiRequest("/api/dashboard/summary", { method: "GET" }),
+      ]);
+
+      const meVal =
+        meRes.status === "fulfilled" ? /** @type {any} */ (meRes.value) : null;
+      const userObj =
+        meVal?.data?.user ||
+        meVal?.data ||
+        meVal?.user ||
+        meVal ||
+        $currentUser ||
+        {};
+      const sumVal =
+        summaryRes.status === "fulfilled"
+          ? /** @type {any} */ (summaryRes.value)
+          : null;
+
+      syncRoomAndRelation(userObj, sumVal);
+    } catch {
+      syncRoomAndRelation($currentUser, null);
     }
   });
 
@@ -71,6 +175,7 @@
   function handleResetProfileForm() {
     nameInput = $currentUser?.name || "";
     phoneInput = getUserPhone($currentUser);
+    syncRoomAndRelation($currentUser, null);
     profileFeedback = "";
     profileError = false;
   }
@@ -246,7 +351,8 @@
                 disabled
               />
               <span class="helper-text">
-                Email dipakai untuk login dan tidak dapat diubah sendiri.
+                Email dipakai untuk login dan tidak dapat diubah sendiri.{#if showRoomAndRelation}
+                  Hubungi Pengelola bila perlu diganti.{/if}
               </span>
             </div>
 
@@ -262,6 +368,39 @@
               />
             </div>
           </div>
+
+          {#if showRoomAndRelation}
+            <div class="grid-two">
+              <div class="field-group">
+                <label class="label" for="profile-room">Kamar</label>
+                <input
+                  id="profile-room"
+                  type="text"
+                  class="input input-locked"
+                  value={roomInput}
+                  readonly
+                  disabled
+                />
+              </div>
+
+              <div class="field-group">
+                <label class="label" for="profile-relation"
+                  >{relationLabel}</label
+                >
+                <input
+                  id="profile-relation"
+                  type="text"
+                  class="input input-locked"
+                  value={relationInput}
+                  readonly
+                  disabled
+                />
+                <span class="helper-text">
+                  Penautan wali diatur oleh Pengelola atau Pemilik.
+                </span>
+              </div>
+            </div>
+          {/if}
 
           {#if profileFeedback}
             <p

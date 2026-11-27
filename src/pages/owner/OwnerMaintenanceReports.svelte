@@ -5,6 +5,7 @@
   import DashboardLayout from "../../layouts/DashboardLayout.svelte";
   import { currentUser } from "../../stores/auth.js";
   import { apiRequest } from "../../services/api.js";
+  import { getToken } from "../../services/token.js";
 
   /** @type {'all' | 'waiting_confirm' | 'in_progress' | 'completed'} */
   let selectedStatus = $state("all");
@@ -64,16 +65,6 @@
     if (role === "owner") return "Pemilik";
     return $currentUser?.role || "Pemilik";
   });
-
-  function getAuthToken() {
-    if (typeof window === "undefined") return "";
-    return (
-      localStorage.getItem("token") ||
-      localStorage.getItem("auth_token") ||
-      localStorage.getItem("access_token") ||
-      ""
-    );
-  }
 
   function revokeCurrentPhotoUrl() {
     if (
@@ -154,7 +145,7 @@
 
     photoBlobLoading = true;
     try {
-      const token = getAuthToken();
+      const token = getToken();
       /** @type {Record<string, string>} */
       const headers = {};
       if (token) {

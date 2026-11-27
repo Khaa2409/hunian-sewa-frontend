@@ -5,6 +5,7 @@
   import DashboardLayout from "../../layouts/DashboardLayout.svelte";
   import { currentUser } from "../../stores/auth.js";
   import { apiRequest } from "../../services/api.js";
+  import { getToken } from "../../services/token.js";
 
   /**
    * @typedef {Object} PeriodOption
@@ -53,10 +54,34 @@
    * @property {FinanceRoomItem[]} rooms
    */
 
-  let selectedPeriod = $state("2026-11");
+  /**
+   * Menghitung periode YYYY-MM saat ini di zona waktu WIB (Asia/Jakarta).
+   * @returns {string}
+   */
+  function getCurrentWibPeriod() {
+    try {
+      const formatted = new Intl.DateTimeFormat("en-CA", {
+        timeZone: "Asia/Jakarta",
+        year: "numeric",
+        month: "2-digit",
+      }).format(new Date());
+      const match = formatted.match(/^(\d{4}-\d{2})/);
+      if (match) return match[1];
+    } catch {
+      // Fallback jika Intl tidak tersedia
+    }
+    const now = new Date();
+    const wibDate = new Date(now.getTime() + 7 * 60 * 60 * 1000);
+    const yyyy = wibDate.getUTCFullYear();
+    const mm = String(wibDate.getUTCMonth() + 1).padStart(2, "0");
+    return `${yyyy}-${mm}`;
+  }
+
+  let selectedPeriod = $state(getCurrentWibPeriod());
   let loading = $state(true);
   let hasError = $state(false);
   let errorMessage = $state("");
+  let downloadingReport = $state(false);
   let currentPage = $state(1);
   const pageSize = 10;
 
@@ -345,9 +370,55 @@
     }
   }
 
-  function handleDownloadReport() {
-    if (typeof window !== "undefined") {
-      window.print();
+  async function handleDownloadReport() {
+    if (typeof window === "undefined" || downloadingReport) return;
+
+    downloadingReport = true;
+    try {
+      const periodQuery = encodeURIComponent(selectedPeriod);
+      const token = getToken();
+      /** @type {Record<string, string>} */
+      const headers = {};
+      if (token) {
+        headers.Authorization = `Bearer ${token}`;
+      }
+
+      const res = await fetch(
+        `/api/reports/financial/export?periode=${periodQuery}`,
+        { headers },
+      );
+      if (!res.ok) {
+        let errText = `Gagal mengunduh laporan CSV (HTTP ${res.status})`;
+        try {
+          const errJson = await res.json();
+          errText = errJson?.pesan || errJson?.message || errText;
+        } catch {
+          // Biarkan pesan default jika respons bukan JSON
+        }
+        throw new Error(errText);
+      }
+
+      const blob = await res.blob();
+      const disposition = res.headers.get("content-disposition") || "";
+      const filenameMatch = disposition.match(
+        /filename\*?=(?:UTF-8'')?["']?([^;"'\n]+)["']?/i,
+      );
+      const filename = filenameMatch?.[1]
+        ? decodeURIComponent(filenameMatch[1].trim())
+        : `laporan-keuangan-${selectedPeriod}.csv`;
+
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+    } catch (/** @type {any} */ err) {
+      window.alert(err?.message || "Gagal mengunduh laporan keuangan.");
+    } finally {
+      downloadingReport = false;
     }
   }
 
@@ -391,7 +462,7 @@
           bind:value={selectedPeriod}
           onchange={handlePeriodChange}
           aria-label="Pilih periode laporan keuangan"
-          disabled={loading}
+          disabled={loading || downloadingReport}
         >
           {#each periodOptions as p}
             <option value={p.value}>{p.label}</option>
@@ -402,9 +473,9 @@
           type="button"
           class="btn-download-report"
           onclick={handleDownloadReport}
-          disabled={loading || hasError}
+          disabled={loading || hasError || downloadingReport}
         >
-          Unduh Laporan
+          {downloadingReport ? "Mengunduh..." : "Unduh Laporan"}
         </button>
       </div>
     </div>
@@ -416,7 +487,7 @@
         bind:value={selectedPeriod}
         onchange={handlePeriodChange}
         aria-label="Pilih periode laporan keuangan mobile"
-        disabled={loading}
+        disabled={loading || downloadingReport}
       >
         {#each periodOptions as p}
           <option value={p.value}>{p.label}</option>
@@ -427,9 +498,9 @@
         type="button"
         class="mobile-download-btn"
         onclick={handleDownloadReport}
-        disabled={loading || hasError}
+        disabled={loading || hasError || downloadingReport}
       >
-        Unduh Laporan
+        {downloadingReport ? "Mengunduh..." : "Unduh Laporan"}
       </button>
     </div>
 

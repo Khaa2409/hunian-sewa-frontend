@@ -71,6 +71,23 @@
   }
 
   /**
+   * Mengonversi teks label/tanggal periode ke format YYYY-MM untuk server
+   * @param {string} periodStr
+   */
+  function parsePeriodToQuery(periodStr) {
+    if (!periodStr || periodStr === "all") return "";
+    if (/^\d{4}-\d{2}$/.test(periodStr)) return periodStr;
+
+    const parsed = new Date(periodStr);
+    if (!Number.isNaN(parsed.getTime())) {
+      const year = parsed.getFullYear();
+      const month = String(parsed.getMonth() + 1).padStart(2, "0");
+      return `${year}-${month}`;
+    }
+    return "";
+  }
+
+  /**
    * @param {Record<string, any>} item
    */
   function getInvoiceId(item) {
@@ -227,11 +244,6 @@
     return Array.from(set);
   });
 
-  let filteredInvoices = $derived.by(() => {
-    if (selectedPeriod === "all") return invoices;
-    return invoices.filter((inv) => getPeriodLabel(inv) === selectedPeriod);
-  });
-
   /**
    * @param {Record<string, any> | null} [bill]
    */
@@ -258,6 +270,11 @@
     viewMode = "checkout";
   }
 
+  function handlePeriodChange() {
+    currentPage = 1;
+    fetchBillingData();
+  }
+
   async function fetchBillingData() {
     loading = true;
     errorMessage = "";
@@ -267,6 +284,11 @@
       const params = new URLSearchParams();
       params.set("page", String(currentPage));
       params.set("limit", String(perPage));
+
+      const pQuery = parsePeriodToQuery(selectedPeriod);
+      if (pQuery) {
+        params.set("periode", pQuery);
+      }
 
       const [profileRes, invoicesRes] = await Promise.allSettled([
         apiRequest("/api/me", { method: "GET" }),
@@ -401,29 +423,13 @@
     const invoiceId = getInvoiceId(selectedInvoice);
 
     try {
-      /** @type {any} */
-      let res = null;
-      try {
-        res = await apiRequest("/api/payments/midtrans", {
+      const res = await apiRequest(
+        `/api/invoices/${encodeURIComponent(invoiceId)}/pay`,
+        {
           method: "POST",
-          body: {
-            invoice_id: invoiceId,
-            invoice_number: getInvoiceNumber(selectedInvoice),
-          },
-        });
-      } catch (/** @type {any} */ primaryErr) {
-        if (primaryErr?.status === 404 && invoiceId) {
-          res = await apiRequest(
-            `/api/invoices/${encodeURIComponent(invoiceId)}/pay`,
-            {
-              method: "POST",
-              body: { payment_gateway: "midtrans" },
-            },
-          );
-        } else {
-          throw primaryErr;
-        }
-      }
+          body: { payment_gateway: "midtrans" },
+        },
+      );
 
       await handleMidtransResponse(res);
     } catch (/** @type {any} */ err) {
@@ -697,6 +703,7 @@
             <select
               class="period-select"
               bind:value={selectedPeriod}
+              onchange={handlePeriodChange}
               aria-label="Filter periode riwayat pembayaran"
             >
               <option value="all">Periode: Semua</option>
@@ -720,14 +727,14 @@
                 </tr>
               </thead>
               <tbody>
-                {#if filteredInvoices.length === 0}
+                {#if invoices.length === 0}
                   <tr>
                     <td colspan="6" class="td-empty">
                       Belum ada riwayat pembayaran.
                     </td>
                   </tr>
                 {:else}
-                  {#each filteredInvoices as inv, idx (getInvoiceId(inv) || idx)}
+                  {#each invoices as inv, idx (getInvoiceId(inv) || idx)}
                     {@const st = normalizeInvoiceStatus(inv)}
                     <tr>
                       <td class="td-period">{getPeriodLabel(inv)}</td>
@@ -763,10 +770,10 @@
 
           <!-- Mobile History Cards -->
           <div class="mobile-history-list">
-            {#if filteredInvoices.length === 0}
+            {#if invoices.length === 0}
               <p class="muted-text">Belum ada riwayat pembayaran.</p>
             {:else}
-              {#each filteredInvoices as inv, idx (getInvoiceId(inv) || idx)}
+              {#each invoices as inv, idx (getInvoiceId(inv) || idx)}
                 {@const st = normalizeInvoiceStatus(inv)}
                 <button
                   type="button"
