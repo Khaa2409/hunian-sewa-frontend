@@ -49,8 +49,10 @@
     normalizedRole === "guardian" || normalizedRole === "tenant",
   );
 
+  let showRoomField = $derived(normalizedRole === "tenant");
+
   let relationLabel = $derived(
-    normalizedRole === "guardian" ? "Penyewa" : "Wali",
+    normalizedRole === "guardian" ? "Anak asuh" : "Wali",
   );
 
   /**
@@ -63,7 +65,6 @@
         ? summaryPayload.data
         : summaryPayload;
     const wards = Array.isArray(root?.wards) ? root.wards : [];
-    const firstWard = wards[0] || null;
 
     const roomVal =
       user?.room_number ||
@@ -73,8 +74,6 @@
       user?.active_contract?.room_number ||
       root?.room_number ||
       root?.room?.room_number ||
-      firstWard?.room_number ||
-      firstWard?.room?.room_number ||
       "";
 
     roomInput = String(roomVal || "").trim() || "-";
@@ -370,18 +369,20 @@
           </div>
 
           {#if showRoomAndRelation}
-            <div class="grid-two">
-              <div class="field-group">
-                <label class="label" for="profile-room">Kamar</label>
-                <input
-                  id="profile-room"
-                  type="text"
-                  class="input input-locked"
-                  value={roomInput}
-                  readonly
-                  disabled
-                />
-              </div>
+            <div class={showRoomField ? "grid-two" : "grid-single"}>
+              {#if showRoomField}
+                <div class="field-group">
+                  <label class="label" for="profile-room">Kamar</label>
+                  <input
+                    id="profile-room"
+                    type="text"
+                    class="input input-locked"
+                    value={roomInput}
+                    readonly
+                    disabled
+                  />
+                </div>
+              {/if}
 
               <div class="field-group">
                 <label class="label" for="profile-relation"
@@ -396,7 +397,9 @@
                   disabled
                 />
                 <span class="helper-text">
-                  Penautan wali diatur oleh Pengelola atau Pemilik.
+                  {normalizedRole === "guardian"
+                    ? "Data anak asuh diatur oleh Pengelola atau Pemilik."
+                    : "Penautan wali diatur oleh Pengelola atau Pemilik."}
                 </span>
               </div>
             </div>
@@ -736,6 +739,12 @@
   .grid-two {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 16px;
+  }
+
+  .grid-single {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
     gap: 16px;
   }
 

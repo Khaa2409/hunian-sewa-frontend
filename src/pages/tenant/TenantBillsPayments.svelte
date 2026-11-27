@@ -369,7 +369,7 @@
           rawList[0] ||
           null;
 
-        const meta = iVal?.meta || iVal?.pagination || {};
+        const meta = iVal?.meta || {};
         totalCount = Number(meta.total ?? iVal?.total ?? rawList.length);
         totalPages = Math.max(
           1,

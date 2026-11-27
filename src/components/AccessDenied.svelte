@@ -282,6 +282,10 @@
   }
 
   @media (max-width: 768px) {
+    .page-header {
+      display: none;
+    }
+
     .page-title {
       font-size: 26px;
       line-height: 1.25;

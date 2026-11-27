@@ -43,6 +43,10 @@ export const deniedMetaStore = writable({
   targetPath: "",
 });
 
+// Guard terakhir yang baru menolak akses; dipakai halaman /access-denied
+// untuk membedakan penolakan asli dari URL yang dibuka langsung.
+let denialPending = false;
+
 /**
  * Guard untuk rute yang mewajibkan role tertentu.
  * @param {"tenant" | "guardian" | "caretaker" | "owner"} allowedRole
@@ -60,6 +64,7 @@ function createRoleGuard(allowedRole, targetPath) {
         deniedRole: allowedRole,
         targetPath,
       });
+      denialPending = true;
       replace("/access-denied");
       return false;
     }
@@ -77,9 +82,17 @@ function authGuard() {
   return true;
 }
 
+function resetDeniedMetaGuard() {
+  if (!denialPending) {
+    deniedMetaStore.set({ deniedRole: "", targetPath: "" });
+  }
+  denialPending = false;
+  return true;
+}
+
 const accessDeniedRoute = wrap({
   component: AccessDeniedRouteView,
-  conditions: [authGuard],
+  conditions: [resetDeniedMetaGuard, authGuard],
 });
 
 const notFoundRoute = wrap({

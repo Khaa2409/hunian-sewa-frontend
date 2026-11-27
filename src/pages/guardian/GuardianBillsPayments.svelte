@@ -415,7 +415,7 @@
               : null;
       }
       rows.push(...list);
-      const meta = val?.meta || val?.pagination || {};
+      const meta = val?.meta || {};
       lastPage = Number(meta.total_pages ?? meta.last_page ?? 1);
       if (list.length === 0) break;
       page += 1;

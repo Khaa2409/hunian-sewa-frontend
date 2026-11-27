@@ -73,6 +73,24 @@
       };
     }
 
+    // 4. Pengelola membuka halaman khusus Penyewa
+    if (activeRole === "caretaker" && deniedRole === "tenant") {
+      const isDamage = targetPath.includes("damage-reports");
+      return {
+        pageTitle: "Akses Terbatas",
+        title: "Halaman ini khusus Penyewa",
+        mobileTitle: "Akses Terbatas",
+        subtitle: "Peran Pengelola tidak memiliki izin untuk halaman ini",
+        description: isDamage
+          ? "Laporan kerusakan dibuat dan dikelola oleh Penyewa. Pengelola hanya dapat menindaklanjuti laporan yang masuk."
+          : "Halaman ini hanya dapat diakses oleh Penyewa. Hubungi Pemilik bila Anda memerlukan informasi terkait.",
+        mobileDescription: isDamage
+          ? "Menu Laporan Kerusakan hanya dapat diakses oleh Penyewa."
+          : "Halaman ini hanya dapat diakses oleh Penyewa.",
+        homeRoute,
+      };
+    }
+
     // Default fallback
     return {
       pageTitle: "Akses Terbatas",
