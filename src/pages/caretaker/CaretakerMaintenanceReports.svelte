@@ -243,9 +243,6 @@
         roleRaw === "caretaker" ||
         (currentUserId != null && msg.user_id === currentUserId);
 
-      const authorWithRole = roleLabel
-        ? `${senderName} (${roleLabel})`
-        : senderName;
       const senderMeta = roleLabel
         ? `${senderName} · ${roleLabel}${timeStr !== "-" ? ` · ${timeStr}` : ""}`
         : `${senderName}${timeStr !== "-" ? ` · ${timeStr}` : ""}`;
@@ -253,8 +250,6 @@
       return {
         id: msg.id ?? `msg-${fallbackTicket?.id || "x"}-${idx}`,
         sender: senderMeta,
-        shortAuthor: authorWithRole,
-        shortTime: formatDate(msg.created_at),
         align: isRightAligned ? "right" : "left",
         text: msg.message || "",
       };
@@ -716,39 +711,55 @@
             </button>
           {/if}
 
-          <div class="mobile-status-box">
+        </article>
+
+        <section class="detail-status-card" aria-label="Status Penanganan">
+          <h2 class="status-card-title">Status Penanganan</h2>
+
+          <div class="status-field-group">
+            <span class="status-field-label">Status</span>
+            <div>
+              <span class="status-badge {selectedReport.status}"
+                >{selectedReport.statusLabel}</span
+              >
+            </div>
+          </div>
+
+          <div class="status-field-group">
             <span class="status-field-label">Catatan teknis dari Pengelola</span
             >
             <p class="tech-note-text">{selectedReport.techNote}</p>
-            {#if getAllowedNextStatuses().length > 0}
-              <button
-                type="button"
-                class="btn-primary-brown mobile-status-btn"
-                onclick={openStatusModal}
-              >
-                Ubah Status Tiket
-              </button>
-            {/if}
           </div>
-        </article>
+
+          {#if getAllowedNextStatuses().length > 0}
+            <button
+              type="button"
+              class="btn-outline-full"
+              onclick={openStatusModal}
+            >
+              Ubah Status
+            </button>
+          {:else}
+            <p class="status-card-footnote">Tiket sudah berstatus Selesai.</p>
+          {/if}
+        </section>
 
         <section class="mobile-followup-card" aria-label="Diskusi Tiket">
-          <h2 class="mobile-followup-title">Diskusi Tiket</h2>
+          <h2 class="discussion-heading">Diskusi Tiket</h2>
 
-          <div class="mobile-followup-list">
-            {#each selectedReport.discussion as msg (msg.id)}
-              <div class="mobile-followup-bubble">
-                <div class="mobile-followup-meta">
-                  <span class="mobile-followup-author">{msg.shortAuthor}</span>
-                  <span class="mobile-followup-time">{msg.shortTime}</span>
+          <div class="discussion-thread-box">
+            {#if selectedReport.discussion.length > 0}
+              {#each selectedReport.discussion as msg (msg.id)}
+                <div class="chat-row {msg.align}">
+                  <span class="chat-sender">{msg.sender}</span>
+                  <div class="chat-bubble {msg.align}">{msg.text}</div>
                 </div>
-                <p class="mobile-followup-text">{msg.text}</p>
-              </div>
+              {/each}
             {:else}
-              <p class="mobile-followup-empty">
-                Belum ada diskusi pada tiket ini.
+              <p class="empty-discussion-text">
+                Belum ada pesan diskusi pada tiket ini.
               </p>
-            {/each}
+            {/if}
           </div>
 
           {#if commentError}
@@ -2502,68 +2513,6 @@
     .mobile-photo-trigger small {
       font-size: 9px;
       color: #8f7b6b;
-    }
-
-    .mobile-status-box {
-      margin-top: 14px;
-      padding-top: 12px;
-      border-top: 1px solid #f0e8df;
-    }
-
-    .mobile-status-btn {
-      width: 100%;
-      margin-top: 10px;
-    }
-
-    .mobile-followup-title {
-      margin: 0 0 12px;
-      font-size: 14px;
-      font-weight: 700;
-      color: #261a14;
-    }
-
-    .mobile-followup-list {
-      display: flex;
-      flex-direction: column;
-      gap: 10px;
-    }
-
-    .mobile-followup-bubble {
-      padding: 11px 12px;
-      border-radius: 8px;
-      background-color: #f6f0e8;
-    }
-
-    .mobile-followup-meta {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 8px;
-      margin-bottom: 4px;
-      font-size: 10px;
-    }
-
-    .mobile-followup-author {
-      font-weight: 700;
-      color: #261a14;
-    }
-
-    .mobile-followup-time {
-      color: #9e8b7c;
-      white-space: nowrap;
-    }
-
-    .mobile-followup-text {
-      margin: 0;
-      font-size: 11px;
-      line-height: 1.45;
-      color: #4a3b30;
-    }
-
-    .mobile-followup-empty {
-      margin: 0;
-      font-size: 11px;
-      color: #9e8b7c;
     }
 
     .status-modal-card.sheet-capable {

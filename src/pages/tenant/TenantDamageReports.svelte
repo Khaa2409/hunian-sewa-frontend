@@ -241,15 +241,47 @@
     };
   });
 
+  const USER_ROLE_LABELS = {
+    owner: "Pemilik",
+    caretaker: "Pengelola",
+    tenant: "Penyewa",
+    penyewa: "Penyewa",
+    guardian: "Wali",
+  };
+
   let discussionItems = $derived.by(() => {
-    return getDiscussionList(selectedReport);
+    const uid = get(currentUser)?.id;
+    return getDiscussionList(selectedReport).map((msg) => {
+      const roleRaw = String(
+        msg?.user_role || msg?.role || msg?.role_label || "",
+      ).toLowerCase();
+      const name = msg?.user_name || msg?.author_name || "Pengguna";
+      const timeStr = formatTanggalWaktu(
+        msg?.created_at || msg?.sent_at || msg?.timestamp,
+      );
+      const isMine =
+        (uid != null && msg?.user_id === uid) ||
+        roleRaw === "tenant" ||
+        roleRaw === "penyewa";
+      return {
+        ...msg,
+        sender: [
+          name,
+          USER_ROLE_LABELS[roleRaw] || "",
+          timeStr !== "-" ? timeStr : "",
+        ]
+          .filter(Boolean)
+          .join(" · "),
+        align: isMine ? "right" : "left",
+        text: msg?.message || msg?.content || msg?.text || msg?.comment || "",
+      };
+    });
   });
 
   /**
    * @param {string} statusParamValue
    */
-  async function requestTickets(statusParamValue) {
-    const params = new URLSearchParams();
+  async function requestTickets(statusParamValue) {    const params = new URLSearchParams();
     params.set("page", String(currentPage));
     params.set("limit", String(perPage));
 
@@ -665,6 +697,7 @@
     {@const stKey = normalizeStatus(selectedReport.status)}
     {@const photoUrl = extractPhotoUrl(selectedReport)}
     {@const techNote =
+      selectedReport.technical_note ||
       selectedReport.technician_note ||
       selectedReport.technician_notes ||
       selectedReport.resolution_note ||
@@ -680,9 +713,8 @@
       {/if}
 
       <div class="detail-grid">
-        <div class="detail-main-col">
-          <div class="dr-card">
-            <div class="detail-top-row">
+        <div class="dr-card">
+          <div class="detail-top-row">
               <span class="ticket-code-label">
                 {getTicketCode(selectedReport)}
               </span>
@@ -753,62 +785,12 @@
             {/if}
           </div>
 
-          <section class="dr-card" aria-label="Diskusi tiket">
-            <h2 class="section-heading">Riwayat Tindak Lanjut</h2>
-
-            {#if discussionItems.length === 0}
-              <p class="dr-empty-sm">Belum ada catatan tindak lanjut.</p>
-            {:else}
-              <div class="discussion-list">
-                {#each discussionItems as msg, idx (msg?.id ?? idx)}
-                  <div class="discussion-bubble">
-                    <div class="discussion-head">
-                      <span class="discussion-author">
-                        {msg?.author_name ||
-                          msg?.sender_name ||
-                          msg?.user_name ||
-                          "Pengguna"}
-                      </span>
-                      <span class="discussion-time">
-                        {formatTanggalWaktu(
-                          msg?.created_at || msg?.sent_at || msg?.timestamp,
-                        )}
-                      </span>
-                    </div>
-                    <p class="discussion-text">
-                      {msg?.message ||
-                        msg?.content ||
-                        msg?.text ||
-                        msg?.comment ||
-                        ""}
-                    </p>
-                  </div>
-                {/each}
-              </div>
-            {/if}
-
-            <form class="comment-form" onsubmit={handleSendComment}>
-              <input
-                type="text"
-                class="comment-input"
-                bind:value={commentInput}
-                placeholder="Tulis catatan atau balasan..."
-                disabled={isSendingComment}
-              />
-              <button
-                type="submit"
-                class="btn-brown"
-                disabled={isSendingComment || !commentInput.trim()}
-              >
-                {isSendingComment ? "Mengirim..." : "Kirim"}
-              </button>
-            </form>
-          </section>
-        </div>
-
-        <aside class="detail-side-col">
-          <section class="dr-card">
+          <section
+            class="dr-card detail-status-card"
+            aria-label="Status Penanganan"
+          >
             <h2 class="section-heading">Status Penanganan</h2>
+
             <div class="side-kv">
               <span class="meta-lbl">Status</span>
               <span class="status-pill {stKey}">
@@ -822,7 +804,43 @@
               </div>
             {/if}
           </section>
-        </aside>
+
+          <section class="detail-discussion-card" aria-label="Diskusi Tiket">
+            <h2 class="discussion-heading">Diskusi Tiket</h2>
+
+            {#if discussionItems.length === 0}
+              <p class="empty-discussion-text">
+                Belum ada pesan diskusi pada tiket ini.
+              </p>
+            {:else}
+              <div class="discussion-thread-box">
+                {#each discussionItems as msg, idx (msg?.id ?? idx)}
+                  <div class="chat-row {msg.align}">
+                    <span class="chat-sender">{msg.sender}</span>
+                    <div class="chat-bubble {msg.align}">{msg.text}</div>
+                  </div>
+                {/each}
+              </div>
+            {/if}
+
+            <form class="chat-reply-form" onsubmit={handleSendComment}>
+              <input
+                type="text"
+                class="chat-reply-input"
+                bind:value={commentInput}
+                placeholder="Tulis balasan untuk pengelola..."
+                aria-label="Tulis balasan untuk pengelola"
+                disabled={isSendingComment}
+              />
+              <button
+                type="submit"
+                class="btn-primary-brown chat-send-btn"
+                disabled={isSendingComment || !commentInput.trim()}
+              >
+                {isSendingComment ? "Mengirim..." : "Kirim"}
+              </button>
+            </form>
+          </section>
       </div>
     </div>
   {:else}
@@ -1516,11 +1534,29 @@
     align-items: start;
   }
 
-  .detail-main-col,
-  .detail-side-col {
-    display: flex;
-    flex-direction: column;
-    gap: 16px;
+  .detail-status-card {
+    grid-column: 2;
+    grid-row: 1 / span 2;
+  }
+
+  .detail-discussion-card {
+    padding: 22px 24px;
+    border: 1px solid #ece3d9;
+    border-radius: 12px;
+    background-color: #ffffff;
+  }
+
+  .discussion-heading {
+    margin: 0 0 14px;
+    font-size: 15px;
+    font-weight: 700;
+    color: #261a14;
+  }
+
+  .empty-discussion-text {
+    margin: 0;
+    font-size: 12px;
+    color: #9e8b7c;
   }
 
   .detail-top-row {
@@ -1592,59 +1628,75 @@
     object-fit: cover;
   }
 
-  .discussion-list {
+  .discussion-thread-box {
+    padding: 16px;
+    border-radius: 10px;
+    background-color: #f6f0e8;
     display: flex;
     flex-direction: column;
-    gap: 10px;
-    margin-bottom: 14px;
+    gap: 14px;
   }
 
-  .discussion-bubble {
-    background-color: #f8f4ef;
-    border-radius: 10px;
-    padding: 10px 12px;
-  }
-
-  .discussion-head {
+  .chat-row {
     display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 8px;
-    margin-bottom: 4px;
+    flex-direction: column;
+    gap: 4px;
   }
 
-  .discussion-author {
-    font-size: 11.5px;
-    font-weight: 700;
-    color: #231f1e;
+  .chat-row.left {
+    align-items: flex-start;
   }
 
-  .discussion-time {
-    font-size: 10.5px;
+  .chat-row.right {
+    align-items: flex-end;
+  }
+
+  .chat-sender {
+    font-size: 10px;
     color: #9e8b7c;
   }
 
-  .discussion-text {
-    margin: 0;
+  .chat-bubble {
+    max-width: 78%;
+    padding: 9px 13px;
+    border-radius: 8px;
     font-size: 12px;
-    color: #3b2e25;
     line-height: 1.45;
   }
 
-  .comment-form {
-    display: flex;
-    gap: 8px;
+  .chat-bubble.left {
+    background-color: #ffffff;
+    border: 1px solid #ece3d9;
+    color: #261a14;
   }
 
-  .comment-input {
+  .chat-bubble.right {
+    background-color: #5a3e28;
+    color: #ffffff;
+  }
+
+  .chat-reply-form {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-top: 12px;
+  }
+
+  .chat-reply-input {
     flex: 1;
-    height: 36px;
+    height: 38px;
     padding: 0 12px;
     border: 1px solid #e4dad0;
     border-radius: 8px;
+    background-color: #ffffff;
+    color: #261a14;
     font-size: 12px;
-    color: #231f1e;
     box-sizing: border-box;
+  }
+
+  .chat-reply-input:focus {
+    outline: none;
+    border-color: #5a3e28;
   }
 
   .side-kv {
@@ -1655,9 +1707,7 @@
   }
 
   .side-note-box {
-    margin-top: 14px;
-    padding-top: 12px;
-    border-top: 1px solid #f2ece4;
+    margin-top: 16px;
   }
 
   /* Drawer / Bottom Sheet Buat Laporan */
@@ -1815,6 +1865,28 @@
     font-weight: 600;
     cursor: pointer;
     white-space: nowrap;
+  }
+
+  .btn-primary-brown {
+    height: 38px;
+    padding: 0 16px;
+    border: none;
+    border-radius: 8px;
+    background-color: #5a3e28;
+    color: #ffffff;
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+
+  .btn-primary-brown:hover:not(:disabled) {
+    background-color: #49311f;
+  }
+
+  .btn-primary-brown:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
   }
 
   .btn-outline {
@@ -2001,6 +2073,11 @@
 
     .detail-grid {
       grid-template-columns: minmax(0, 1fr);
+    }
+
+    .detail-status-card {
+      grid-column: auto;
+      grid-row: auto;
     }
 
     .create-drawer {
