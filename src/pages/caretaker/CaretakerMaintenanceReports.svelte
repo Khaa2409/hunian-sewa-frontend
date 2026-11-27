@@ -488,7 +488,10 @@
   function getAllowedNextStatuses() {
     const current = selectedReport?.status;
     if (current === "pending") {
-      return [{ value: "in_progress", label: "Diproses" }];
+      return [
+        { value: "in_progress", label: "Diproses" },
+        { value: "resolved", label: "Selesai" },
+      ];
     }
     if (current === "in_progress") {
       return [{ value: "resolved", label: "Selesai" }];
