@@ -44,7 +44,7 @@
    * @returns {string}
    */
   function formatRoleLabel(roleValue) {
-    if (!roleValue) return "Pemilik";
+    if (!roleValue) return "Pengguna";
     const normalized = String(roleValue).toLowerCase();
     if (normalized === "owner") return "Pemilik";
     if (normalized === "caretaker") return "Pengelola";
@@ -54,7 +54,7 @@
   }
 
   let effectiveRoleKey = $derived.by(() => {
-    const raw = role || $currentUser?.role || "owner";
+    const raw = role || $currentUser?.role || "";
     return String(raw).toLowerCase();
   });
 
@@ -66,7 +66,8 @@
     if (isTenant) return "/tenant";
     if (isGuardian) return "/guardian";
     if (isCaretaker) return "/caretaker";
-    return "/owner";
+    if (effectiveRoleKey === "owner") return "/owner";
+    return "/login";
   });
 
   let resolvedOwnerName = $derived.by(() => {
@@ -75,14 +76,14 @@
     if (isTenant) return "Penyewa";
     if (isGuardian) return "Wali";
     if (isCaretaker) return "Pengelola";
-    return "Bu Ratna";
+    return "Pengguna";
   });
 
   let resolvedOwnerRole = $derived.by(() => {
     if (ownerRole) return ownerRole;
     if (role) return formatRoleLabel(role);
     if ($currentUser?.role) return formatRoleLabel($currentUser.role);
-    return "Pemilik";
+    return "Pengguna";
   });
 
   /**

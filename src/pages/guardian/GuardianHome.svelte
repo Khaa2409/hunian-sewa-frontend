@@ -394,27 +394,9 @@
    * @param {WardItem | null} ward
    */
   async function fetchWardSecondaryData(ward) {
-    const queryParts = [];
-    if (
-      ward?.tenantId !== null &&
-      ward?.tenantId !== undefined &&
-      ward?.tenantId !== ""
-    ) {
-      queryParts.push(`tenant_id=${encodeURIComponent(String(ward.tenantId))}`);
-    } else if (
-      ward?.contractId !== null &&
-      ward?.contractId !== undefined &&
-      ward?.contractId !== ""
-    ) {
-      queryParts.push(
-        `contract_id=${encodeURIComponent(String(ward.contractId))}`,
-      );
-    }
-    const wardQuery = queryParts.length > 0 ? `?${queryParts.join("&")}` : "";
-
     const [annResult, invResult] = await Promise.allSettled([
       apiRequest("/api/announcements"),
-      apiRequest(`/api/invoices${wardQuery}`),
+      apiRequest("/api/invoices"),
     ]);
 
     if (annResult.status === "fulfilled") {
@@ -434,7 +416,12 @@
               String(itemTenantId) === String(ward.tenantId)
             );
           })
-        : rawInvoices;
+        : ward?.contractId
+          ? rawInvoices.filter(
+              (/** @type {any} */ item) =>
+                String(item?.contract_id ?? "") === String(ward.contractId),
+            )
+          : rawInvoices;
 
       const paidRows = filteredByWard.filter(isPaidInvoiceItem);
       paymentHistory = paidRows.slice(0, 3).map(normalizePayment);

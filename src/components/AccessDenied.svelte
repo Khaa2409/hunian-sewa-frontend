@@ -34,7 +34,7 @@
   );
 
   let normalizedRole = $derived(
-    String($currentUser?.role || "tenant").toLowerCase(),
+    String($currentUser?.role || "").toLowerCase(),
   );
 
   let resolvedHomeRoute = $derived.by(() => {
@@ -42,7 +42,8 @@
     if (normalizedRole === "owner") return "/owner";
     if (normalizedRole === "caretaker") return "/caretaker";
     if (normalizedRole === "guardian") return "/guardian";
-    return "/tenant";
+    if (normalizedRole === "tenant") return "/tenant";
+    return "/login";
   });
 
   let displayName = $derived.by(() => {
@@ -50,7 +51,8 @@
     if (normalizedRole === "owner") return "Pemilik";
     if (normalizedRole === "caretaker") return "Pengelola";
     if (normalizedRole === "guardian") return "Wali";
-    return "Penyewa";
+    if (normalizedRole === "tenant") return "Penyewa";
+    return "Pengguna";
   });
 
   let displayRole = $derived.by(() => {
@@ -58,7 +60,7 @@
     if (normalizedRole === "owner") return "Pemilik";
     if (normalizedRole === "guardian") return "Wali";
     if (normalizedRole === "tenant") return "Penyewa";
-    return $currentUser?.role || "Pengguna";
+    return $currentUser?.role || "";
   });
 
   onMount(() => {

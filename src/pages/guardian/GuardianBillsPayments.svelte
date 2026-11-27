@@ -5,6 +5,7 @@
   import { fade, fly } from "svelte/transition";
   import DashboardLayout from "../../layouts/DashboardLayout.svelte";
   import { apiRequest } from "../../services/api.js";
+  import { loadSnap } from "../../lib/midtrans.js";
   import { currentUser } from "../../stores/auth.js";
 
   /**
@@ -497,7 +498,11 @@
         : paymentRes || {};
 
     const snapToken =
-      data?.snap_token || data?.token || paymentRes?.snap_token || "";
+      data?.gateway_transaction_id ||
+      data?.snap_token ||
+      data?.token ||
+      paymentRes?.snap_token ||
+      "";
     const redirectUrl =
       data?.redirect_url ||
       data?.payment_url ||
@@ -505,8 +510,7 @@
       paymentRes?.redirect_url ||
       "";
 
-    const snapObj =
-      typeof window !== "undefined" ? /** @type {any} */ (window).snap : null;
+    const snapObj = await loadSnap();
 
     if (snapToken && snapObj && typeof snapObj.pay === "function") {
       snapObj.pay(snapToken, {

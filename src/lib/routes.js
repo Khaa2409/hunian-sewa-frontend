@@ -84,6 +84,8 @@ const accessDeniedRoute = wrap({
 
 const notFoundRoute = wrap({
   component: AccessDenied,
+  // Tamu tidak boleh melihat kerangka dashboard; arahkan ke login.
+  conditions: [authGuard],
   props: {
     variant: "not-found",
     pageTitle: "Halaman Tidak Ditemukan",
