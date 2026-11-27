@@ -106,11 +106,11 @@
     }
   }
 
+  // Kamar dan wali read-only hasil kontrak, hanya diisi di onMount.
   $effect(() => {
     if ($currentUser) {
       nameInput = $currentUser.name || "";
       phoneInput = getUserPhone($currentUser);
-      syncRoomAndRelation($currentUser, null);
     }
   });
 
@@ -175,7 +175,6 @@
   function handleResetProfileForm() {
     nameInput = $currentUser?.name || "";
     phoneInput = getUserPhone($currentUser);
-    syncRoomAndRelation($currentUser, null);
     profileFeedback = "";
     profileError = false;
   }
