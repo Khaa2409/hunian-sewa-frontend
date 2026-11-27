@@ -39,3 +39,33 @@ export function loadSnap() {
     document.head.appendChild(element);
   });
 }
+
+/**
+ * Ambil status pembayaran dari URL balikan Snap, lalu bersihkan query.
+ * @returns {string} settlement | capture | pending | deny | expire | cancel | failure
+ */
+export function consumeSnapReturnStatus() {
+  if (typeof window === "undefined") return "";
+  const hash = window.location.hash || "";
+  const [, hashQuery = ""] = hash.split("?");
+  const params = new URLSearchParams(
+    `${window.location.search.replace(/^\?/, "")}&${hashQuery}`,
+  );
+  const status = params.get("transaction_status") || "";
+  if (!status) return "";
+
+  const cleanHash = hash.split("?")[0];
+  const cleanUrl = `${window.location.pathname}${cleanHash}`;
+  window.history.replaceState(window.history.state, "", cleanUrl);
+  return status;
+}
+
+/** Pesan ramah untuk status balikan Snap */
+export function snapReturnMessage(status) {
+  if (status === "settlement" || status === "capture") return "Pembayaran berhasil diproses.";
+  if (status === "pending") return "Pembayaran tertunda. Selesaikan sesuai instruksi.";
+  if (status === "deny" || status === "failure") return "Pembayaran ditolak. Silakan coba lagi.";
+  if (status === "expire") return "Sesi pembayaran kedaluwarsa. Silakan coba lagi.";
+  if (status === "cancel") return "Pembayaran dibatalkan.";
+  return "";
+}

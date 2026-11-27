@@ -5,7 +5,7 @@
   import { fade, fly } from "svelte/transition";
   import DashboardLayout from "../../layouts/DashboardLayout.svelte";
   import { apiRequest } from "../../services/api.js";
-  import { loadSnap } from "../../lib/midtrans.js";
+  import { loadSnap, consumeSnapReturnStatus, snapReturnMessage } from "../../lib/midtrans.js";
   import { currentUser } from "../../stores/auth.js";
 
   /**
@@ -592,7 +592,16 @@
   }
 
   onMount(() => {
-    fetchBillingData();
+    const returnStatus = consumeSnapReturnStatus();
+    const returnMessage = snapReturnMessage(returnStatus);
+    if (returnMessage) notifyFeedback(returnMessage);
+    if (returnStatus) {
+      // Webhook Midtrans bisa sedikit tertinggal; cek ulang setelah jeda singkat
+      fetchBillingData();
+      setTimeout(fetchBillingData, 3000);
+    } else {
+      fetchBillingData();
+    }
   });
 </script>
 
