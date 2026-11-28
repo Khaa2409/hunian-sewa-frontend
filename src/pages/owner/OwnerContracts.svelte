@@ -149,7 +149,7 @@
       pending: "Menunggu Pembayaran",
       active: "Aktif",
       completed: "Selesai",
-      terminated: "Dihentikan",
+      terminated: "Dibatalkan",
       cancelled: "Dibatalkan",
     };
     const key = String(status || "");
@@ -161,7 +161,7 @@
     if (status === "active") return "active";
     if (status === "pending") return "expiring";
     if (status === "completed") return "completed";
-    if (status === "terminated" || status === "cancelled") return "ended";
+    if (status === "terminated" || status === "cancelled") return "cancelled";
     return "ended";
   }
 
@@ -1425,7 +1425,7 @@
               : ''}"
             onclick={() => selectStatusTab("terminated")}
           >
-            Dihentikan ({tabCounts.terminated})
+            Dibatalkan ({tabCounts.terminated})
           </button>
         </div>
 
@@ -2340,6 +2340,11 @@
   .status-pill.ended {
     background-color: #f3efe9;
     color: #7c6858;
+  }
+
+  .status-pill.cancelled {
+    background-color: #ffe4e6;
+    color: #e11d48;
   }
 
   .status-pill.failed {
