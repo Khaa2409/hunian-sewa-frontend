@@ -5,6 +5,7 @@
   import DashboardLayout from "../../layouts/DashboardLayout.svelte";
   import { currentUser } from "../../stores/auth.js";
   import { apiRequest } from "../../services/api.js";
+  import { ROOM_TYPES } from "../../lib/roomTypes.js";
 
   let selectedStatus = $state("all"); // 'all' | 'vacant' | 'occupied' | 'maintenance'
   let currentPage = $state(1);
@@ -57,25 +58,7 @@
   let roomPriceInput = $state("");
   let roomFacilitiesInput = $state("");
 
-  const baseRoomTypes = [
-    "Standard",
-    "Deluxe",
-    "Standar AC",
-    "Kamar Mandi Dalam",
-  ];
-
-  let availableRoomTypes = $derived.by(() => {
-    const set = new Set(baseRoomTypes);
-    for (const room of rooms) {
-      if (room.type && room.type.trim()) {
-        set.add(room.type.trim());
-      }
-    }
-    if (roomTypeInput && roomTypeInput.trim()) {
-      set.add(roomTypeInput.trim());
-    }
-    return Array.from(set);
-  });
+  const baseRoomTypes = ROOM_TYPES;
 
   let displayOwnerName = $derived($currentUser?.name || "Bu Ratna");
   let displayOwnerRole = $derived.by(() => {
@@ -266,7 +249,7 @@
     formError = "";
     targetRoom = null;
     roomNumberInput = "";
-    roomTypeInput = "Standard";
+    roomTypeInput = baseRoomTypes[0];
     roomPriceInput = "";
     roomFacilitiesInput = "";
     activeDrawerOrModal = "add";
@@ -279,7 +262,9 @@
     formError = "";
     targetRoom = room;
     roomNumberInput = room.number;
-    roomTypeInput = room.type || "Standard";
+    roomTypeInput = baseRoomTypes.includes(room.type)
+      ? room.type
+      : baseRoomTypes[0];
     roomPriceInput =
       room.priceNumber !== null &&
       room.priceNumber !== undefined &&
@@ -816,7 +801,7 @@
             bind:value={roomTypeInput}
             disabled={isSubmitting}
           >
-            {#each availableRoomTypes as roomTypeOption}
+            {#each baseRoomTypes as roomTypeOption}
               <option value={roomTypeOption}>{roomTypeOption}</option>
             {/each}
           </select>
@@ -946,7 +931,7 @@
             bind:value={roomTypeInput}
             disabled={isSubmitting}
           >
-            {#each availableRoomTypes as roomTypeOption}
+            {#each baseRoomTypes as roomTypeOption}
               <option value={roomTypeOption}>{roomTypeOption}</option>
             {/each}
           </select>
