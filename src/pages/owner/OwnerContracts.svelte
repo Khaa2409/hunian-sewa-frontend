@@ -165,6 +165,27 @@
     return "ended";
   }
 
+  /** @param {any} payment */
+  function getPaymentStatusLabel(payment) {
+    const raw = String(payment?.status_label || payment?.status || "")
+      .trim()
+      .toLowerCase();
+    if (["settlement", "capture", "paid", "lunas", "completed"].includes(raw))
+      return "Lunas";
+    if (["expire", "deny", "failure", "cancel", "cancelled"].includes(raw))
+      return "Gagal";
+    if (payment?.paid_at) return "Lunas";
+    return "Menunggu Pembayaran";
+  }
+
+  /** @param {any} payment */
+  function getPaymentStatusClass(payment) {
+    const label = getPaymentStatusLabel(payment);
+    if (label === "Lunas") return "active";
+    if (label === "Gagal") return "failed";
+    return "expiring";
+  }
+
   /** @param {any} ticket */
   function formatTicketStatusLabel(ticket) {
     const raw =
@@ -961,8 +982,9 @@
                               formatRupiah(pay.amount || pay.gross_amount)}
                           </div>
                         </div>
-                        <span class="status-pill active"
-                          >{pay.status_label || pay.status || "Lunas"}</span
+                        <span
+                          class="status-pill {getPaymentStatusClass(pay)}"
+                          >{getPaymentStatusLabel(pay)}</span
                         >
                       </div>
 
@@ -1028,8 +1050,9 @@
                               "-"}</td
                           >
                           <td>
-                            <span class="status-pill active"
-                              >{pay.status_label || pay.status || "Lunas"}</span
+                            <span
+                              class="status-pill {getPaymentStatusClass(pay)}"
+                              >{getPaymentStatusLabel(pay)}</span
                             >
                           </td>
                         </tr>
@@ -2317,6 +2340,11 @@
   .status-pill.ended {
     background-color: #f3efe9;
     color: #7c6858;
+  }
+
+  .status-pill.failed {
+    background-color: #ffe4e6;
+    color: #e11d48;
   }
 
   /* BADGE STATUS TIKET SESUAI LAPORAN KERUSAKAN */
