@@ -1,4 +1,4 @@
-<script>
+﻿<script>
   import { fade, fly, scale } from "svelte/transition";
   import { cubicOut } from "svelte/easing";
   import { push } from "svelte-spa-router";
@@ -114,19 +114,6 @@
     const dt = new Date(year, month, day);
     const dow = WEEKDAYS_ID[dt.getDay()] || "";
     return `${dow}, ${day} ${MONTHS_ID[month]} ${year}`;
-  }
-
-  /** @param {any} dateStr */
-  function formatMonthYearId(dateStr) {
-    if (!dateStr) return "";
-    const clean = String(dateStr).slice(0, 10);
-    if (/^\d{4}-\d{2}-\d{2}$/.test(clean)) {
-      const [y, m] = clean.split("-").map(Number);
-      if (m >= 1 && m <= 12) {
-        return `${MONTHS_ID[m - 1]} ${y}`;
-      }
-    }
-    return "";
   }
 
   /** @param {any} contract */
@@ -289,8 +276,6 @@
   let viewMode = $state("list");
   /** @type {any} */
   let selectedContract = $state(null);
-  let paymentPage = $state(1);
-  const paymentPerPage = 5;
 
   // Data dari API backend
   /** @type {any[]} */
@@ -569,7 +554,6 @@
         ...(typeof item === "object" && item !== null ? item : {}),
         ...detailData,
       };
-      paymentPage = 1;
       viewMode = "detail";
     } catch (/** @type {any} */ err) {
       errorMessage =
@@ -778,48 +762,6 @@
     return (currentPage - 1) * perPage + contracts.length;
   });
 
-  let currentInvoice = $derived.by(() => {
-    if (!selectedContract) return null;
-    if (
-      Array.isArray(selectedContract.open_invoices) &&
-      selectedContract.open_invoices.length > 0
-    ) {
-      return selectedContract.open_invoices[0];
-    }
-    return selectedContract.current_invoice || null;
-  });
-
-  let paymentHistory = $derived.by(() => {
-    if (!selectedContract) return [];
-    if (Array.isArray(selectedContract.payments))
-      return selectedContract.payments;
-    if (Array.isArray(selectedContract.payment_history))
-      return selectedContract.payment_history;
-    return [];
-  });
-
-  let paymentTotalPages = $derived.by(() => {
-    return Math.max(1, Math.ceil(paymentHistory.length / paymentPerPage));
-  });
-
-  let pagedPayments = $derived.by(() => {
-    const start = (paymentPage - 1) * paymentPerPage;
-    return paymentHistory
-      .slice(start, start + paymentPerPage)
-      .map((/** @type {any} */ pay) => {
-        let rawPeriod = pay.period_label || pay.period || pay.billing_period;
-        if (!rawPeriod || rawPeriod === "-") {
-          const dateSource = pay.paid_at || pay.payment_date || pay.created_at;
-          const formatted = formatMonthYearId(dateSource);
-          rawPeriod = formatted ? formatted : "-";
-        }
-        return {
-          ...pay,
-          computedPeriod: rawPeriod,
-        };
-      });
-  });
-
   let relatedTickets = $derived.by(() => {
     if (!selectedContract || !Array.isArray(selectedContract.tickets))
       return [];
@@ -984,148 +926,6 @@
 
           <section class="figma-card">
             <div class="figma-card-head">
-              <h2 class="figma-card-title">Riwayat Pembayaran</h2>
-              <span class="badge-pill-soft"
-                >{paymentHistory.length} pembayaran</span
-              >
-            </div>
-
-            {#if pagedPayments.length > 0}
-              {#if isMobileViewport}
-                <div class="mobile-payment-list">
-                  {#each pagedPayments as pay (pay.id || pay.invoice_number)}
-                    <div class="mobile-payment-card">
-                      <div class="mobile-payment-top">
-                        <div>
-                          <div class="mobile-payment-period">
-                            Periode {pay.computedPeriod}
-                          </div>
-                          <div class="mobile-payment-amount">
-                            {pay.amount_rupiah ||
-                              formatRupiah(pay.amount || pay.gross_amount)}
-                          </div>
-                        </div>
-                        <span class="status-pill active"
-                          >{pay.status_label || pay.status || "Lunas"}</span
-                        >
-                      </div>
-
-                      <div class="mobile-payment-meta-grid">
-                        <div>
-                          <span class="summary-lbl">Tgl Bayar</span>
-                          <span class="mobile-payment-meta-val"
-                            >{pay.paid_at_wib ||
-                              formatDateId(
-                                pay.paid_at || pay.payment_date,
-                              )}</span
-                          >
-                        </div>
-                        <div>
-                          <span class="summary-lbl">Metode</span>
-                          <span class="mobile-payment-meta-val"
-                            >{pay.payment_method || pay.method || "-"}</span
-                          >
-                        </div>
-                        <div>
-                          <span class="summary-lbl">Dibayar Oleh</span>
-                          <span class="mobile-payment-meta-val"
-                            >{pay.paid_by_name ||
-                              pay.payer_name ||
-                              selectedContract.tenant_name ||
-                              "-"}</span
-                          >
-                        </div>
-                      </div>
-                    </div>
-                  {/each}
-                </div>
-              {:else}
-                <div class="table-wrap">
-                  <table class="mini-table">
-                    <thead>
-                      <tr>
-                        <th>Periode</th>
-                        <th>Nominal</th>
-                        <th>Tgl Bayar</th>
-                        <th>Metode</th>
-                        <th>Dibayar Oleh</th>
-                        <th>Status</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {#each pagedPayments as pay (pay.id || pay.invoice_number)}
-                        <tr>
-                          <td>{pay.computedPeriod}</td>
-                          <td
-                            >{pay.amount_rupiah ||
-                              formatRupiah(pay.amount || pay.gross_amount)}</td
-                          >
-                          <td class="cell-muted-date"
-                            >{pay.paid_at_wib ||
-                              formatDateId(pay.paid_at || pay.payment_date)}</td
-                          >
-                          <td>{pay.payment_method || pay.method || "-"}</td>
-                          <td
-                            >{pay.paid_by_name ||
-                              pay.payer_name ||
-                              selectedContract.tenant_name ||
-                              "-"}</td
-                          >
-                          <td>
-                            <span class="status-pill active"
-                              >{pay.status_label || pay.status || "Lunas"}</span
-                            >
-                          </td>
-                        </tr>
-                      {/each}
-                    </tbody>
-                  </table>
-                </div>
-              {/if}
-
-              <div class="mini-pagination-bar">
-                <span class="pagination-summary">
-                  Menampilkan {(paymentPage - 1) * paymentPerPage +
-                    1}-{Math.min(
-                    paymentPage * paymentPerPage,
-                    paymentHistory.length,
-                  )} dari {paymentHistory.length} pembayaran
-                </span>
-                <div class="pagination-controls">
-                  <span class="pagination-page-info"
-                    >Halaman {paymentPage} dari {paymentTotalPages}</span
-                  >
-                  <button
-                    type="button"
-                    class="page-btn"
-                    onclick={() => (paymentPage = Math.max(1, paymentPage - 1))}
-                    disabled={paymentPage <= 1}
-                  >
-                    Sebelumnya
-                  </button>
-                  <button
-                    type="button"
-                    class="page-btn"
-                    onclick={() =>
-                      (paymentPage = Math.min(
-                        paymentTotalPages,
-                        paymentPage + 1,
-                      ))}
-                    disabled={paymentPage >= paymentTotalPages}
-                  >
-                    Berikutnya
-                  </button>
-                </div>
-              </div>
-            {:else}
-              <p class="empty-sub-text">
-                Belum ada riwayat pembayaran tercatat untuk kontrak ini.
-              </p>
-            {/if}
-          </section>
-
-          <section class="figma-card">
-            <div class="figma-card-head">
               <h2 class="figma-card-title">Tiket Terkait</h2>
               <span class="badge-pill-soft">{relatedTickets.length} tiket</span>
             </div>
@@ -1174,47 +974,6 @@
 
         <!-- KOLOM KANAN (SAMPING / DI BAWAH PADA MOBILE) -->
         <div class="detail-col-right">
-          <section class="figma-card">
-            <div class="figma-card-head">
-              <h2 class="figma-card-title">Tagihan Berjalan</h2>
-              {#if currentInvoice}
-                <span class="status-pill expiring">Menunggu Pembayaran</span>
-              {:else}
-                <span class="status-pill ended">Tidak Ada Tagihan</span>
-              {/if}
-            </div>
-
-            {#if currentInvoice}
-              <div class="invoice-number-sub">
-                {currentInvoice.invoice_number}
-              </div>
-              <div class="invoice-amount-big">
-                {currentInvoice.amount_rupiah ||
-                  formatRupiah(currentInvoice.amount)}
-              </div>
-
-              <div class="kv-rows">
-                <div class="kv-row">
-                  <span class="kv-label">Periode</span>
-                  <span class="kv-value"
-                    >{currentInvoice.period_label ||
-                      formatDateId(
-                        currentInvoice.period_start || currentInvoice.due_date,
-                      )}</span
-                  >
-                </div>
-                <div class="kv-row">
-                  <span class="kv-label">Jatuh tempo</span>
-                  <span class="kv-value kv-danger"
-                    >{formatDateId(currentInvoice.due_date)}</span
-                  >
-                </div>
-              </div>
-            {:else}
-              <p class="empty-sub-text">Tidak ada tagihan terbuka saat ini.</p>
-            {/if}
-          </section>
-
           <section class="figma-card">
             <h2 class="figma-card-title card-title-mb">Penyewa</h2>
 
@@ -2666,65 +2425,6 @@
     color: #b08968 !important;
   }
 
-  /* MOBILE PAYMENT CARD */
-  .mobile-payment-list {
-    display: flex;
-    flex-direction: column;
-    gap: 10px;
-  }
-
-  .mobile-payment-card {
-    padding: 12px;
-    border: 1px solid #f0e8df;
-    border-radius: 10px;
-    background-color: #fcfaf7;
-  }
-
-  .mobile-payment-top {
-    display: flex;
-    align-items: flex-start;
-    justify-content: space-between;
-    gap: 8px;
-    padding-bottom: 8px;
-    margin-bottom: 8px;
-    border-bottom: 1px solid #f2eae1;
-  }
-
-  .mobile-payment-period {
-    font-size: 11px;
-    font-weight: 600;
-    color: #8f7c6e;
-    margin-bottom: 2px;
-  }
-
-  .mobile-payment-amount {
-    font-size: 14px;
-    font-weight: 700;
-    color: #261a14;
-  }
-
-  .mobile-payment-meta-grid {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 8px 12px;
-  }
-
-  .mobile-payment-meta-val {
-    display: block;
-    font-size: 11px;
-    font-weight: 600;
-    color: #261a14;
-  }
-
-  .mini-pagination-bar {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 10px;
-    padding-top: 12px;
-    flex-wrap: wrap;
-  }
-
   .empty-sub-text {
     margin: 0;
     font-size: 12px;
@@ -2783,22 +2483,6 @@
     color: #b08968;
   }
 
-  .invoice-number-sub {
-    font-size: 11px;
-    line-height: 1.3;
-    color: #9e8b7c;
-    margin-bottom: 3px;
-  }
-
-  .invoice-amount-big {
-    font-size: 20px;
-    font-weight: 700;
-    line-height: 1.25;
-    color: #261a14;
-    margin-bottom: 10px;
-    letter-spacing: -0.01em;
-  }
-
   .kv-rows {
     display: flex;
     flex-direction: column;
@@ -2819,10 +2503,6 @@
   .kv-value {
     font-weight: 600;
     color: #261a14;
-  }
-
-  .kv-danger {
-    color: #d93829;
   }
 
   .tenant-profile-head {
