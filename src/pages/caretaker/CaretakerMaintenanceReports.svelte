@@ -7,6 +7,8 @@
   import { apiRequest, API_BASE_URL } from "../../services/api.js";
   import { getToken } from "../../services/token.js";
 
+  const CARETAKER_OPEN_TICKET_KEY = "hunify_open_caretaker_ticket_id";
+
   /** @type {'all' | 'pending' | 'in_progress' | 'resolved'} */
   let selectedStatus = $state("all");
   let searchQuery = $state("");
@@ -178,8 +180,15 @@
    */
   function normalizeStatus(rawStatus) {
     const val = String(rawStatus || "").toLowerCase();
-    if (val === "resolved") return "resolved";
-    if (val === "in_progress") return "in_progress";
+    if (
+      val === "resolved" ||
+      val === "completed" ||
+      val === "done" ||
+      val === "selesai"
+    )
+      return "resolved";
+    if (val === "in_progress" || val === "progress" || val === "diproses")
+      return "in_progress";
     return "pending";
   }
 
@@ -423,6 +432,30 @@
     }
   }
 
+  async function consumePendingTicketFromDashboard() {
+    if (typeof window === "undefined") return;
+    let pendingId = "";
+    try {
+      pendingId =
+        window.sessionStorage.getItem(CARETAKER_OPEN_TICKET_KEY) || "";
+      if (pendingId) {
+        window.sessionStorage.removeItem(CARETAKER_OPEN_TICKET_KEY);
+      }
+    } catch {
+      pendingId = "";
+    }
+
+    if (!pendingId) return;
+
+    const matched = reports.find(
+      (r) =>
+        String(r.id) === String(pendingId) ||
+        String(r.ticketCode) === String(pendingId),
+    ) || { id: pendingId, ticketCode: String(pendingId) };
+
+    openReportDetail(matched);
+  }
+
   /** @type {ReturnType<typeof setTimeout> | null} */
   let searchDebounceTimer = null;
   function handleSearchInput() {
@@ -636,9 +669,10 @@
     return () => window.removeEventListener("resize", syncViewport);
   });
 
-  onMount(() => {
-    fetchTickets();
-    syncStatusCounts();
+  onMount(async () => {
+    await fetchTickets();
+    await syncStatusCounts();
+    await consumePendingTicketFromDashboard();
   });
 
   onDestroy(() => {

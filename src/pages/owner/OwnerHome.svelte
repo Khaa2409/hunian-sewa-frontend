@@ -6,6 +6,8 @@
   import { currentUser } from "../../stores/auth.js";
   import { apiRequest } from "../../services/api.js";
 
+  const OWNER_OPEN_TICKET_KEY = "hunify_open_owner_ticket_id";
+
   /**
    * @typedef {Object} OccupancySummary
    * @property {number} [total]
@@ -81,8 +83,8 @@
     "Desember",
   ];
 
-  /** @type {'active' | 'all' | 'resolved'} */
-  let ticketStatusFilter = $state("active");
+  /** @type {'all' | 'waiting' | 'in_progress' | 'completed'} */
+  let ticketStatusFilter = $state("all");
 
   let summaryLoading = $state(true);
   let summaryError = $state("");
@@ -195,6 +197,23 @@
   }
 
   /**
+   * @param {MouseEvent | null} event
+   * @param {{ rawId?: string | number, id?: string }} ticket
+   */
+  function openTicketDetail(event, ticket) {
+    if (event) event.preventDefault();
+    const targetId = ticket?.rawId ?? ticket?.id ?? "";
+    if (typeof window !== "undefined" && targetId !== "") {
+      try {
+        window.sessionStorage.setItem(OWNER_OPEN_TICKET_KEY, String(targetId));
+      } catch {
+        // Abaikan jika sessionStorage tidak tersedia
+      }
+      window.location.hash = "#/owner/maintenance";
+    }
+  }
+
+  /**
    * @param {string | null | undefined} isoOrDateString
    * @returns {string}
    */
@@ -283,19 +302,32 @@
 
   /**
    * @param {string | null | undefined} status
-   * @returns {{ label: string, type: 'pending' | 'progress' | 'done' }}
+   * @returns {{ key: 'waiting' | 'in_progress' | 'completed', label: string, type: 'pending' | 'progress' | 'done' }}
    */
   function getTicketStatusInfo(status) {
-    switch (status) {
-      case "pending":
-        return { label: "Menunggu Konfirmasi", type: "pending" };
-      case "in_progress":
-        return { label: "Diproses", type: "progress" };
-      case "resolved":
-        return { label: "Selesai", type: "done" };
-      default:
-        return { label: status || "Pending", type: "pending" };
+    const val = String(status || "").toLowerCase();
+    if (
+      val === "resolved" ||
+      val === "completed" ||
+      val === "done" ||
+      val === "selesai" ||
+      val === "closed"
+    ) {
+      return { key: "completed", label: "Selesai", type: "done" };
     }
+    if (
+      val === "in_progress" ||
+      val === "progress" ||
+      val === "diproses" ||
+      val === "processing"
+    ) {
+      return { key: "in_progress", label: "Diproses", type: "progress" };
+    }
+    return {
+      key: "waiting",
+      label: "Menunggu Konfirmasi",
+      type: "pending",
+    };
   }
 
   let formattedTickets = $derived(
@@ -309,23 +341,19 @@
         reportedAt: formatDate(ticket.created_at),
         status: statusInfo.label,
         statusType: statusInfo.type,
+        normalizedStatus: statusInfo.key,
         rawStatus: ticket.status,
       };
     }),
   );
 
   let filteredTickets = $derived.by(() => {
-    if (ticketStatusFilter === "active") {
-      return formattedTickets.filter(
-        (ticket) => ticket.rawStatus !== "resolved",
-      );
+    if (ticketStatusFilter === "all") {
+      return formattedTickets;
     }
-    if (ticketStatusFilter === "resolved") {
-      return formattedTickets.filter(
-        (ticket) => ticket.rawStatus === "resolved",
-      );
-    }
-    return formattedTickets;
+    return formattedTickets.filter(
+      (ticket) => ticket.normalizedStatus === ticketStatusFilter,
+    );
   });
 
   async function loadOwnerSummary() {
@@ -699,9 +727,10 @@
             bind:value={ticketStatusFilter}
             aria-label="Filter status tiket komplain"
           >
-            <option value="active">Status: Aktif</option>
-            <option value="all">Status: Semua</option>
-            <option value="resolved">Status: Selesai</option>
+            <option value="all">Semua</option>
+            <option value="waiting">Menunggu</option>
+            <option value="in_progress">Diproses</option>
+            <option value="completed">Selesai</option>
           </select>
         </div>
       </div>
@@ -741,7 +770,7 @@
                     <button
                       type="button"
                       class="outline-action-btn"
-                      onclick={(e) => goToHash(e, "#/owner/maintenance")}
+                      onclick={(e) => openTicketDetail(e, ticket)}
                     >
                       Detail
                     </button>
@@ -767,9 +796,10 @@
           bind:value={ticketStatusFilter}
           aria-label="Filter status tiket komplain mobile"
         >
-          <option value="active">Aktif</option>
           <option value="all">Semua</option>
-          <option value="resolved">Selesai</option>
+          <option value="waiting">Menunggu</option>
+          <option value="in_progress">Diproses</option>
+          <option value="completed">Selesai</option>
         </select>
       </div>
 
@@ -780,21 +810,30 @@
       {:else if filteredTickets.length === 0}
         <div class="table-state-message">Tidak ada tiket komplain.</div>
       {:else}
-        <div class="mobile-payment-list">
+        <div class="mobile-ticket-card-list">
           {#each filteredTickets.slice(0, 5) as ticket}
-            <div class="mobile-payment-row">
-              <div class="mobile-payment-info">
-                <div class="mobile-payment-name">
-                  {ticket.id} · Kamar {ticket.roomNumber}
+            <button
+              type="button"
+              class="mobile-ticket-box"
+              onclick={(e) => openTicketDetail(e, ticket)}
+            >
+              <div class="mobile-ticket-box-top">
+                <div>
+                  <div class="mobile-ticket-id">
+                    {ticket.id} · Kamar {ticket.roomNumber}
+                  </div>
+                  <div class="mobile-ticket-category">{ticket.category}</div>
                 </div>
-                <div class="mobile-payment-meta">
-                  {ticket.category} · {ticket.reportedAt}
-                </div>
+                <span class="status-badge {ticket.statusType}"
+                  >{ticket.status}</span
+                >
               </div>
-              <span class="status-badge {ticket.statusType}"
-                >{ticket.status}</span
-              >
-            </div>
+
+              <div class="mobile-ticket-box-bottom">
+                <span class="mobile-ticket-date">{ticket.reportedAt}</span>
+                <span class="mobile-ticket-open">Buka &rarr;</span>
+              </div>
+            </button>
           {/each}
         </div>
       {/if}
@@ -1075,14 +1114,18 @@
 
   .status-badge.paid,
   .status-badge.done {
-    background-color: #e6f6ec;
-    color: #1e7e46;
+    background-color: #dcfce7;
+    color: #15803d;
   }
 
-  .status-badge.pending,
+  .status-badge.pending {
+    background-color: #fef3c7;
+    color: #b45309;
+  }
+
   .status-badge.progress {
-    background-color: #fff6df;
-    color: #b7791f;
+    background-color: #dbeafe;
+    color: #1d4ed8;
   }
 
   .status-badge.overdue {
@@ -1196,6 +1239,69 @@
     .mobile-payment-meta {
       font-size: 11px;
       color: #9e8b7c;
+    }
+
+    .mobile-ticket-card-list {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    .mobile-ticket-box {
+      display: block;
+      width: 100%;
+      padding: 14px;
+      border: 1px solid #ece3d9;
+      border-radius: 10px;
+      background-color: #ffffff;
+      text-align: left;
+      cursor: pointer;
+      transition:
+        background-color 0.15s ease,
+        border-color 0.15s ease;
+    }
+
+    .mobile-ticket-box:hover {
+      background-color: #fcfaf7;
+      border-color: #dfd3c5;
+    }
+
+    .mobile-ticket-box-top {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 10px;
+      margin-bottom: 10px;
+    }
+
+    .mobile-ticket-id {
+      font-size: 13px;
+      font-weight: 700;
+      color: #261a14;
+      margin-bottom: 2px;
+    }
+
+    .mobile-ticket-category {
+      font-size: 12px;
+      color: #6f5f52;
+    }
+
+    .mobile-ticket-box-bottom {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+    }
+
+    .mobile-ticket-date {
+      font-size: 11px;
+      color: #9e8b7c;
+    }
+
+    .mobile-ticket-open {
+      font-size: 12px;
+      font-weight: 600;
+      color: #5c432d;
     }
   }
 </style>

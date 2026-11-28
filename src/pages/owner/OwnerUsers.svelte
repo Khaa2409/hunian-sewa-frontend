@@ -42,8 +42,6 @@
   // Menyimpan password sementara per user.id selama halaman ini aktif
   /** @type {Record<string, string>} */
   let sessionTempPasswords = $state({});
-  /** @type {string | null} */
-  let copiedRowUserId = $state(null);
 
   let roleCounts = $state({
     all: 0,
@@ -138,28 +136,6 @@
   }
 
   /**
-   * @param {any} userId
-   * @param {string} tempPass
-   * @param {Event} [event]
-   */
-  async function handleCopyRowPassword(userId, tempPass, event) {
-    if (event) event.stopPropagation();
-    if (!tempPass) return;
-
-    try {
-      await navigator.clipboard.writeText(tempPass);
-      copiedRowUserId = String(userId);
-      setTimeout(() => {
-        if (copiedRowUserId === String(userId)) {
-          copiedRowUserId = null;
-        }
-      }, 2000);
-    } catch {
-      copiedRowUserId = null;
-    }
-  }
-
-  /**
    * @param {string} roleKey
    */
   function mapRoleToApi(roleKey) {
@@ -221,8 +197,6 @@
   }
 
   /**
-   * Mengecek apakah status kontrak memang aktif (sudah berjalan & terbayar).
-   * Kontrak berstatus "Menunggu Pembayaran" / "pending" tidak dianggap aktif.
    * @param {any} rawStatus
    */
   function isActiveContractStatus(rawStatus) {
@@ -232,9 +206,6 @@
     return s === "active" || s === "aktif";
   }
 
-  /**
-   * Mengambil kamar yang benar-benar memiliki kontrak AKTIF saja.
-   */
   async function fetchTenantRoomMapping() {
     /** @type {Record<string, string>} */
     const nextMap = {};
@@ -285,7 +256,6 @@
         ).trim();
         if (!roomNum) continue;
 
-        // Jika data kontrak tersedia, pastikan kamar memang termasuk kontrak aktif
         if (
           activeRoomNumbers.size > 0 &&
           !activeRoomNumbers.has(roomNum.toLowerCase())
@@ -335,8 +305,6 @@
 
     let roleLabel = roleShort;
     if (roleKey === "tenant") {
-      // Jika punya kamar dengan kontrak aktif -> tampilkan kamar
-      // Jika belum punya kamar aktif tapi memiliki wali -> tampilkan wali
       if (mappedActiveRoomNum) {
         roleLabel = `${roleShort} · Kamar ${mappedActiveRoomNum}`;
       } else if (guardianName) {
@@ -406,9 +374,6 @@
     };
   }
 
-  /**
-   * Hitung jumlah pengguna per peran secara presisi dengan query limit=1
-   */
   async function fetchRoleCounts() {
     try {
       const [allRes, tenantRes, guardianRes, caretakerRes, ownerRes] =
@@ -428,13 +393,10 @@
         owner: ownerRes?.meta?.total ?? 0,
       };
     } catch {
-      // Biarkan daftar utama tetap berjalan jika hitung tab gagal
+      // Biarkan jika hitung tab gagal
     }
   }
 
-  /**
-   * Mengambil daftar akun pengguna dengan paginasi backend
-   */
   async function fetchUsers() {
     loading = true;
     errorMsg = "";
@@ -491,9 +453,6 @@
     }
   }
 
-  /**
-   * Mengambil daftar seluruh akun wali untuk opsi dropdown
-   */
   async function fetchGuardianOptions() {
     try {
       /** @type {any} */
@@ -504,7 +463,7 @@
         name: g.name || g.full_name || "Akun Wali",
       }));
     } catch {
-      // Abaikan jika pemanggilan opsi wali opsional gagal
+      // Abaikan jika opsional gagal
     }
   }
 
@@ -671,6 +630,7 @@
 
       await fetchUsers();
       if (!createdTempPassword) {
+        isSubmitting = false;
         closeOverlay();
       }
     } catch (/** @type {any} */ err) {
@@ -709,6 +669,7 @@
         body: payload,
       });
 
+      isSubmitting = false;
       closeOverlay();
       await fetchUsers();
     } catch (/** @type {any} */ err) {
@@ -721,40 +682,50 @@
 
   async function handleConfirmDeactivate() {
     if (!targetUser || targetUser.role === "owner") return;
+    const userId = targetUser.id;
     formError = "";
     isSubmitting = true;
 
     try {
-      await apiRequest(`/api/users/${targetUser.id}/deactivate`, {
+      await apiRequest(`/api/users/${userId}/deactivate`, {
         method: "PATCH",
       });
 
-      closeOverlay();
+      // Lepas status submitting & tutup modal langsung tanpa menunggu fetchUsers
+      isSubmitting = false;
+      activeOverlay = null;
+      targetUser = null;
+      formError = "";
+
       await fetchUsers();
     } catch (/** @type {any} */ err) {
       formError =
         err?.data?.pesan || err?.message || "Gagal menonaktifkan akun.";
-    } finally {
       isSubmitting = false;
     }
   }
 
   async function handleConfirmActivate() {
     if (!targetUser) return;
+    const userId = targetUser.id;
     formError = "";
     isSubmitting = true;
 
     try {
-      await apiRequest(`/api/users/${targetUser.id}/activate`, {
+      await apiRequest(`/api/users/${userId}/activate`, {
         method: "PATCH",
       });
 
-      closeOverlay();
+      // Lepas status submitting & tutup modal langsung tanpa menunggu fetchUsers
+      isSubmitting = false;
+      activeOverlay = null;
+      targetUser = null;
+      formError = "";
+
       await fetchUsers();
     } catch (/** @type {any} */ err) {
       formError =
         err?.data?.pesan || err?.message || "Gagal mengaktifkan akun.";
-    } finally {
       isSubmitting = false;
     }
   }
@@ -1042,7 +1013,6 @@
       <!-- MOBILE CARD LIST -->
       <div class="mobile-only user-card-list" in:fade={{ duration: 160 }}>
         {#each users as user (user.id)}
-          {@const rowTempPass = sessionTempPasswords[String(user.id)]}
           <article class="user-card">
             <div class="user-card-top">
               <div>
@@ -1063,51 +1033,6 @@
               </div>
             </div>
 
-            {#if rowTempPass}
-              <div
-                class="mobile-pass-row"
-                role="button"
-                tabindex="0"
-                onclick={(e) => handleCopyRowPassword(user.id, rowTempPass, e)}
-                onkeydown={(e) => {
-                  if (e.key === "Enter" || e.key === " ") {
-                    handleCopyRowPassword(user.id, rowTempPass, e);
-                  }
-                }}
-              >
-                <span class="meta-lbl"
-                  >Password Awal / Sementara (klik untuk salin)</span
-                >
-                <div class="pass-chip-wrap">
-                  <code class="table-pass-code">{rowTempPass}</code>
-                  <span class="copy-icon-btn" title="Salin password">
-                    {#if copiedRowUserId === String(user.id)}
-                      <span class="copied-text">Tersalin</span>
-                    {:else}
-                      <svg
-                        xmlns="http://www.w3.org/2000/svg"
-                        width="14"
-                        height="14"
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="currentColor"
-                        stroke-width="2"
-                        stroke-linecap="round"
-                        stroke-linejoin="round"
-                        aria-hidden="true"
-                      >
-                        <rect x="9" y="9" width="13" height="13" rx="2" ry="2"
-                        ></rect>
-                        <path
-                          d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"
-                        ></path>
-                      </svg>
-                    {/if}
-                  </span>
-                </div>
-              </div>
-            {/if}
-
             <div class="user-card-footer-action">
               <button
                 type="button"
@@ -1122,7 +1047,7 @@
                 class="btn-link-reset"
                 onclick={() => openResetPasswordOverlay(user)}
               >
-                Reset Password
+                Reset Sandi
               </button>
 
               {#if user.role !== "owner"}
@@ -1182,8 +1107,7 @@
         <div class="desktop-card-header">
           <h2 class="desktop-card-title">Daftar Akun Pengguna</h2>
           <p class="desktop-card-subtitle">
-            Klik password yang baru dibuat/direset atau ikon salin di sebelahnya
-            untuk menyalin lalu berikan ke pengguna
+            Kelola data akun pengguna dan status akses sistem
           </p>
         </div>
 
@@ -1195,77 +1119,17 @@
                 <th>Peran</th>
                 <th>Email</th>
                 <th>No. HP</th>
-                <th>Password</th>
                 <th>Status</th>
                 <th class="col-action">Aksi</th>
               </tr>
             </thead>
             <tbody>
               {#each users as user (user.id)}
-                {@const rowTempPass = sessionTempPasswords[String(user.id)]}
                 <tr>
                   <td class="cell-name">{user.name}</td>
                   <td class="cell-role">{user.roleLabel}</td>
                   <td class="cell-muted">{user.email}</td>
                   <td class="cell-muted">{user.phone}</td>
-                  <td class="cell-password">
-                    {#if rowTempPass}
-                      <div
-                        class="password-copy-cell"
-                        role="button"
-                        tabindex="0"
-                        title="Klik untuk menyalin password"
-                        onclick={(e) =>
-                          handleCopyRowPassword(user.id, rowTempPass, e)}
-                        onkeydown={(e) => {
-                          if (e.key === "Enter" || e.key === " ") {
-                            handleCopyRowPassword(user.id, rowTempPass, e);
-                          }
-                        }}
-                      >
-                        <code class="table-pass-code">{rowTempPass}</code>
-                        <button
-                          type="button"
-                          class="copy-icon-btn"
-                          title="Salin password"
-                          aria-label="Salin password"
-                          onclick={(e) =>
-                            handleCopyRowPassword(user.id, rowTempPass, e)}
-                        >
-                          {#if copiedRowUserId === String(user.id)}
-                            <span class="copied-text">Tersalin</span>
-                          {:else}
-                            <svg
-                              xmlns="http://www.w3.org/2000/svg"
-                              width="14"
-                              height="14"
-                              viewBox="0 0 24 24"
-                              fill="none"
-                              stroke="currentColor"
-                              stroke-width="2"
-                              stroke-linecap="round"
-                              stroke-linejoin="round"
-                              aria-hidden="true"
-                            >
-                              <rect
-                                x="9"
-                                y="9"
-                                width="13"
-                                height="13"
-                                rx="2"
-                                ry="2"
-                              ></rect>
-                              <path
-                                d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"
-                              ></path>
-                            </svg>
-                          {/if}
-                        </button>
-                      </div>
-                    {:else}
-                      <span class="cell-muted">-</span>
-                    {/if}
-                  </td>
                   <td>
                     <span class="badge-status {user.status}"
                       >{user.statusLabel}</span
@@ -1353,7 +1217,7 @@
   {#if activeOverlay === "create"}
     <div
       class="overlay-backdrop"
-      transition:fade={{ duration: 160 }}
+      in:fade={{ duration: 160 }}
       onclick={closeOverlay}
       role="presentation"
     ></div>
@@ -1362,7 +1226,7 @@
       role="dialog"
       aria-modal="true"
       aria-label="Daftarkan Akun Baru"
-      transition:fly={sheetFlyParams}
+      in:fly={sheetFlyParams}
     >
       <div class="sheet-handle mobile-only"></div>
       <div class="sheet-top">
@@ -1385,8 +1249,7 @@
         <div class="temp-password-box" in:fade={{ duration: 160 }}>
           <strong>Akun {createdUserName || "baru"} berhasil didaftarkan!</strong
           ><br />
-          Password dibuat otomatis oleh sistem (juga bisa diklik di kolom Password
-          pada tabel):
+          Password dibuat otomatis oleh sistem:
           <div
             class="modal-pass-copy-row"
             role="button"
@@ -1548,7 +1411,7 @@
   {#if activeOverlay === "edit" && targetUser}
     <div
       class="overlay-backdrop"
-      transition:fade={{ duration: 160 }}
+      in:fade={{ duration: 160 }}
       onclick={closeOverlay}
       role="presentation"
     ></div>
@@ -1557,7 +1420,7 @@
       role="dialog"
       aria-modal="true"
       aria-label="Ubah Akun"
-      transition:fly={sheetFlyParams}
+      in:fly={sheetFlyParams}
     >
       <div class="sheet-handle mobile-only"></div>
       <div class="sheet-top-with-sub">
@@ -1673,7 +1536,7 @@
   {#if activeOverlay === "reset-password" && targetUser}
     <div
       class="overlay-backdrop"
-      transition:fade={{ duration: 160 }}
+      in:fade={{ duration: 160 }}
       onclick={closeOverlay}
       role="presentation"
     ></div>
@@ -1682,7 +1545,7 @@
       role="dialog"
       aria-modal="true"
       aria-label="Reset Password Akun"
-      transition:scale={{ start: 0.96, duration: 180, easing: cubicOut }}
+      in:scale={{ start: 0.96, duration: 180, easing: cubicOut }}
     >
       <div class="sheet-handle mobile-only"></div>
 
@@ -1803,7 +1666,7 @@
   {#if activeOverlay === "deactivate" && targetUser}
     <div
       class="overlay-backdrop"
-      transition:fade={{ duration: 160 }}
+      in:fade={{ duration: 160 }}
       onclick={closeOverlay}
       role="presentation"
     ></div>
@@ -1812,7 +1675,7 @@
       role="dialog"
       aria-modal="true"
       aria-label="Nonaktifkan Akun"
-      transition:scale={{ start: 0.96, duration: 180, easing: cubicOut }}
+      in:scale={{ start: 0.96, duration: 180, easing: cubicOut }}
     >
       <div class="sheet-handle mobile-only"></div>
 
@@ -1870,7 +1733,7 @@
   {#if activeOverlay === "activate" && targetUser}
     <div
       class="overlay-backdrop"
-      transition:fade={{ duration: 160 }}
+      in:fade={{ duration: 160 }}
       onclick={closeOverlay}
       role="presentation"
     ></div>
@@ -1879,7 +1742,7 @@
       role="dialog"
       aria-modal="true"
       aria-label="Aktifkan Kembali Akun"
-      transition:scale={{ start: 0.96, duration: 180, easing: cubicOut }}
+      in:scale={{ start: 0.96, duration: 180, easing: cubicOut }}
     >
       <div class="sheet-handle mobile-only"></div>
 
@@ -1938,26 +1801,6 @@
     display: none;
   }
 
-  .cell-password {
-    white-space: nowrap;
-  }
-
-  .password-copy-cell {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    padding: 3px 8px;
-    border-radius: 6px;
-    background-color: #f4fbf7;
-    border: 1px solid #b7ebd0;
-    cursor: pointer;
-    user-select: none;
-  }
-
-  .password-copy-cell:hover {
-    background-color: #e6f7ee;
-  }
-
   .modal-pass-copy-row {
     display: flex;
     align-items: center;
@@ -1968,14 +1811,6 @@
     border-radius: 6px;
     background-color: #d1fae5;
     cursor: pointer;
-  }
-
-  .table-pass-code {
-    font-size: 12px;
-    font-weight: 700;
-    color: #065f46;
-    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
-      monospace;
   }
 
   .copy-icon-btn {
@@ -2779,23 +2614,6 @@
       display: grid;
       grid-template-columns: repeat(2, minmax(0, 1fr));
       gap: 12px;
-    }
-
-    .mobile-pass-row {
-      margin-top: 10px;
-      padding-top: 8px;
-      border-top: 1px dashed #e6ddd2;
-      cursor: pointer;
-    }
-
-    .pass-chip-wrap {
-      display: inline-flex;
-      align-items: center;
-      gap: 6px;
-      padding: 3px 8px;
-      border-radius: 6px;
-      background-color: #f4fbf7;
-      border: 1px solid #b7ebd0;
     }
 
     .meta-lbl {

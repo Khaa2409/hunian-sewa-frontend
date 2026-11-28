@@ -7,6 +7,8 @@
   import { apiRequest } from "../../services/api.js";
   import { getToken } from "../../services/token.js";
 
+  const OWNER_OPEN_TICKET_KEY = "hunify_open_owner_ticket_id";
+
   /** @type {'all' | 'waiting_confirm' | 'in_progress' | 'completed'} */
   let selectedStatus = $state("all");
   let searchQuery = $state("");
@@ -240,13 +242,11 @@
 
   /**
    * @param {'waiting_confirm' | 'in_progress' | 'completed'} normalizedStatus
-   * @param {any} rawStatus
    * @returns {string}
    */
-  function mapStatusLabel(normalizedStatus, rawStatus) {
+  function mapStatusLabel(normalizedStatus) {
     if (normalizedStatus === "completed") return "Selesai";
     if (normalizedStatus === "in_progress") return "Diproses";
-    if (rawStatus === "pending") return "Menunggu Konfirmasi";
     return "Menunggu Konfirmasi";
   }
 
@@ -260,7 +260,10 @@
     if (normalizedStatus === "in_progress") {
       return { mobileStatus: "in_progress", mobileStatusLabel: "Diproses" };
     }
-    return { mobileStatus: "waiting", mobileStatusLabel: "Menunggu" };
+    return {
+      mobileStatus: "waiting_confirm",
+      mobileStatusLabel: "Menunggu Konfirmasi",
+    };
   }
 
   /**
@@ -424,7 +427,7 @@
       reportedDateTime: formatDateTime(raw.created_at || raw.reported_at),
       status,
       rawStatus: raw.status,
-      statusLabel: mapStatusLabel(status, raw.status),
+      statusLabel: mapStatusLabel(status),
       ...mobileStatusInfo,
       description: raw.description || raw.detail || "-",
       techNote:
@@ -731,6 +734,41 @@
     }
   }
 
+  async function consumePendingTicketFromDashboard() {
+    if (typeof window === "undefined") return;
+    let pendingId = "";
+
+    try {
+      pendingId = window.sessionStorage.getItem(OWNER_OPEN_TICKET_KEY) || "";
+      if (pendingId) {
+        window.sessionStorage.removeItem(OWNER_OPEN_TICKET_KEY);
+      }
+    } catch {
+      pendingId = "";
+    }
+
+    if (!pendingId && window.location.hash.includes("ticket_id=")) {
+      const queryPart = window.location.hash.split("?")[1] || "";
+      const params = new URLSearchParams(queryPart);
+      pendingId = params.get("ticket_id") || "";
+    }
+
+    if (!pendingId) return;
+
+    const matched = reports.find(
+      (r) =>
+        String(r.id) === String(pendingId) ||
+        String(r.ticketCode) === String(pendingId),
+    ) ||
+      allTicketsCache.find(
+        (r) =>
+          String(r.id) === String(pendingId) ||
+          String(r.ticketCode) === String(pendingId),
+      ) || { id: pendingId, ticketCode: String(pendingId) };
+
+    openReportDetail(matched);
+  }
+
   /** @type {ReturnType<typeof setTimeout> | null} */
   let searchDebounceTimer = null;
   function handleSearchInput() {
@@ -798,8 +836,9 @@
     }
   }
 
-  onMount(() => {
-    fetchTickets();
+  onMount(async () => {
+    await fetchTickets();
+    await consumePendingTicketFromDashboard();
   });
 
   onDestroy(() => {
@@ -833,7 +872,7 @@
         </div>
       {/if}
 
-      <!-- DETAIL MOBILE sesuai Figma Pemilik - Detail Laporan Kerusakan -->
+      <!-- DETAIL MOBILE -->
       <div class="mobile-only mobile-detail-stack" in:fade={{ duration: 160 }}>
         <article class="mobile-detail-main-card">
           <div class="mobile-detail-top-row">
@@ -924,7 +963,7 @@
         </section>
       </div>
 
-      <!-- DETAIL DESKTOP sesuai Figma Pemilik - Detail Laporan -->
+      <!-- DETAIL DESKTOP -->
       <div class="desktop-only detail-desktop-grid" in:fade={{ duration: 160 }}>
         <div class="detail-main-column">
           <!-- Kartu Utama Tiket -->
@@ -1281,7 +1320,7 @@
           >
         </div>
       {:else if reports.length === 0}
-        <!-- EMPTY STATE LAPORAN KERUSAKAN FIGMA -->
+        <!-- EMPTY STATE LAPORAN KERUSAKAN -->
         <div class="empty-tickets-wrap" in:fade={{ duration: 160 }}>
           <div class="empty-tickets-card">
             <div class="empty-inbox-circle" aria-hidden="true">
@@ -1480,7 +1519,7 @@
     gap: 12px;
   }
 
-  /* --- EMPTY STATE FIGMA LAPORAN KERUSAKAN --- */
+  /* --- EMPTY STATE LAPORAN KERUSAKAN --- */
   .empty-tickets-wrap {
     padding: 24px 0;
     display: flex;
@@ -1739,11 +1778,7 @@
     white-space: nowrap;
   }
 
-  .status-badge.waiting_confirm {
-    background-color: #fef3c7;
-    color: #b45309;
-  }
-
+  .status-badge.waiting_confirm,
   .status-badge.waiting {
     background-color: #fef3c7;
     color: #b45309;
