@@ -7,6 +7,9 @@
   import { apiRequest } from "../../services/api.js";
   import { currentUser } from "../../stores/auth.js";
 
+  const PENDING_TICKET_STORAGE_KEY = "hunify_tenant_open_ticket_id";
+  const PENDING_TICKET_DATA_KEY = "hunify_tenant_open_ticket_data";
+
   /** @type {Record<string, any> | null} */
   let profile = $state(null);
 
@@ -15,6 +18,9 @@
 
   /** @type {Record<string, any> | null} */
   let currentInvoice = $state(null);
+
+  /** @type {string} */
+  let fallbackDueDate = $state("");
 
   /** @type {Array<Record<string, any>>} */
   let announcements = $state([]);
@@ -65,12 +71,38 @@
   }
 
   /**
-   * @param {Record<string, any>} item
+   * @param {Record<string, any>} ticket
+   */
+  function openTicketDetail(ticket) {
+    const ticketId = ticket?.id ?? ticket?.ticket_id ?? ticket?.report_id ?? "";
+    if (typeof window !== "undefined") {
+      try {
+        if (ticketId !== "") {
+          window.sessionStorage.setItem(
+            PENDING_TICKET_STORAGE_KEY,
+            String(ticketId),
+          );
+        }
+        window.sessionStorage.setItem(
+          PENDING_TICKET_DATA_KEY,
+          JSON.stringify(ticket || {}),
+        );
+      } catch {
+        // Abaikan jika sessionStorage tidak tersedia
+      }
+    }
+    navigateHash("/tenant/damage-reports");
+  }
+
+  /**
+   * @param {Record<string, any> | null | undefined} item
    */
   function isUnpaidInvoice(item) {
+    if (!item || typeof item !== "object") return false;
     const raw = String(item?.status || item?.payment_status || "")
       .trim()
       .toLowerCase();
+    if (!raw) return true;
     return ![
       "paid",
       "lunas",
@@ -84,18 +116,63 @@
   }
 
   /**
+   * @param {Record<string, any> | null | undefined} item
+   */
+  function extractDueDate(item) {
+    if (!item || typeof item !== "object") return "";
+    return String(
+      item.next_due_date ||
+        item.due_date ||
+        item.jatuh_tempo ||
+        item.billing_due_date ||
+        "",
+    ).trim();
+  }
+
+  /**
+   * @param {string | null | undefined} rawStatus
+   * @returns {'pending' | 'processing' | 'done'}
+   */
+  function normalizeTicketStatus(rawStatus) {
+    const val = String(rawStatus || "")
+      .trim()
+      .toLowerCase();
+    if (
+      val === "completed" ||
+      val === "done" ||
+      val === "resolved" ||
+      val === "closed" ||
+      val === "selesai"
+    ) {
+      return "done";
+    }
+    if (
+      val === "in_progress" ||
+      val === "progress" ||
+      val === "processing" ||
+      val === "diproses"
+    ) {
+      return "processing";
+    }
+    return "pending";
+  }
+
+  /**
+   * @param {Record<string, any>} ticket
+   */
+  function getTicketStatusText(ticket) {
+    const normalized = normalizeTicketStatus(ticket?.status);
+    if (normalized === "done") return "Selesai";
+    if (normalized === "processing") return "Diproses";
+    return "Menunggu";
+  }
+
+  /**
    * @param {Record<string, any>} ticket
    */
   function isActiveTicket(ticket) {
-    const raw = String(ticket?.status || "")
-      .trim()
-      .toLowerCase();
-    return (
-      raw === "pending" ||
-      raw === "in_progress" ||
-      raw === "diproses" ||
-      raw === "processing"
-    );
+    const st = normalizeTicketStatus(ticket?.status);
+    return st === "pending" || st === "processing";
   }
 
   /**
@@ -133,6 +210,7 @@
     errorMessage = "";
     activeContract = null;
     currentInvoice = null;
+    fallbackDueDate = "";
 
     const fallbackUser = get(currentUser);
 
@@ -185,13 +263,16 @@
           Array.isArray(activeContract.open_invoices) &&
           activeContract.open_invoices.length > 0
         ) {
-          currentInvoice = activeContract.open_invoices[0];
-        } else {
-          currentInvoice = activeContract.current_invoice || null;
+          currentInvoice =
+            activeContract.open_invoices.find((/** @type {any} */ inv) =>
+              isUnpaidInvoice(inv),
+            ) || null;
+        } else if (isUnpaidInvoice(activeContract.current_invoice)) {
+          currentInvoice = activeContract.current_invoice;
         }
       }
 
-      if (!currentInvoice && invoicesRes.status === "fulfilled") {
+      if (invoicesRes.status === "fulfilled") {
         /** @type {any} */
         const iVal = invoicesRes.value;
         const invList = Array.isArray(iVal?.data)
@@ -202,11 +283,38 @@
               ? iVal
               : [];
 
-        currentInvoice =
-          iVal?.active_invoice ||
-          iVal?.current_invoice ||
-          invList.find((/** @type {any} */ inv) => isUnpaidInvoice(inv)) ||
-          null;
+        if (!currentInvoice) {
+          const candidateInvoice =
+            iVal?.active_invoice ||
+            iVal?.current_invoice ||
+            invList.find((/** @type {any} */ inv) => isUnpaidInvoice(inv)) ||
+            null;
+
+          currentInvoice = isUnpaidInvoice(candidateInvoice)
+            ? candidateInvoice
+            : null;
+        }
+
+        const latestInvoiceWithDue = invList.find((/** @type {any} */ inv) =>
+          Boolean(extractDueDate(inv)),
+        );
+
+        fallbackDueDate =
+          extractDueDate(currentInvoice) ||
+          extractDueDate(activeContract) ||
+          extractDueDate(activeContract?.current_invoice) ||
+          extractDueDate(iVal?.active_invoice) ||
+          extractDueDate(iVal?.current_invoice) ||
+          extractDueDate(latestInvoiceWithDue) ||
+          extractDueDate(profile) ||
+          "";
+      } else {
+        fallbackDueDate =
+          extractDueDate(currentInvoice) ||
+          extractDueDate(activeContract) ||
+          extractDueDate(activeContract?.current_invoice) ||
+          extractDueDate(profile) ||
+          "";
       }
 
       // 3. Pengumuman Terkini (Dari /api/announcements)
@@ -273,20 +381,20 @@
    * @param {string | null | undefined} status
    */
   function getTicketVariant(status) {
-    const s = String(status || "").toLowerCase();
-    if (s === "diproses" || s === "in_progress" || s === "processing") {
-      return "badge-processing";
+    const normalized = normalizeTicketStatus(status);
+    if (normalized === "processing") {
+      return "ticket-status-processing";
     }
-    if (
-      s === "selesai" ||
-      s === "resolved" ||
-      s === "completed" ||
-      s === "done"
-    ) {
-      return "badge-done";
+    if (normalized === "done") {
+      return "ticket-status-done";
     }
-    return "badge-routine";
+    return "ticket-status-pending";
   }
+
+  let hasOpenInvoice = $derived(isUnpaidInvoice(currentInvoice));
+  let upcomingDueDate = $derived(
+    extractDueDate(currentInvoice) || fallbackDueDate || "",
+  );
 
   onMount(() => {
     fetchDashboardData();
@@ -323,8 +431,6 @@
       </div>
     </div>
   {:else}
-    {@const dueDateValue =
-      currentInvoice?.due_date || activeContract?.next_due_date || ""}
     <div in:fade={{ duration: 200 }} class="tenant-stack dashboard-frame">
       <!-- Greeting Header -->
       <div in:fly={{ y: 8, duration: 220 }}>
@@ -355,35 +461,42 @@
             <div>
               <h2 class="section-title">Pengingat Jatuh Tempo</h2>
               <p class="section-subtitle">
-                {currentInvoice?.period_label || "Tagihan Sewa"}
+                {hasOpenInvoice
+                  ? currentInvoice?.period_label || "Tagihan Sewa"
+                  : "Semua tagihan sudah dibayar"}
               </p>
             </div>
 
-            {#if dueDateValue}
+            {#if upcomingDueDate}
               <span class="badge-warning">
-                {getDueBadgeText(dueDateValue)}
+                {getDueBadgeText(upcomingDueDate)}
               </span>
             {/if}
           </div>
 
           <div class="due-body">
-            {#if dueDateValue}
+            {#if upcomingDueDate}
               <p class="due-amount">
-                Jatuh tempo: {formatTanggal(dueDateValue)}
+                Jatuh tempo: {formatTanggal(upcomingDueDate)}
               </p>
             {:else}
-              <p class="tenant-muted">Belum ada data jatuh tempo.</p>
+              <p class="tenant-muted">
+                Tidak ada tagihan aktif saat ini. Tombol bayar sewa akan muncul
+                kembali jika ada invoice baru.
+              </p>
             {/if}
           </div>
 
           <div class="due-actions">
-            <button
-              type="button"
-              onclick={() => navigateHash("/tenant/bills-payments")}
-              class="btn-primary-brown"
-            >
-              Bayar Sewa
-            </button>
+            {#if hasOpenInvoice}
+              <button
+                type="button"
+                onclick={() => navigateHash("/tenant/bills-payments")}
+                class="btn-primary-brown"
+              >
+                Bayar Sewa
+              </button>
+            {/if}
             <button
               type="button"
               onclick={() => navigateHash("/tenant/bills-payments")}
@@ -483,7 +596,7 @@
         {#if activeTickets.length === 0}
           <p class="tenant-empty">Belum ada tiket laporan aktif.</p>
         {:else}
-          <div class="table-scroll">
+          <div class="table-scroll desktop-ticket-table-wrap">
             <table class="data-table ticket-table">
               <thead>
                 <tr>
@@ -510,16 +623,13 @@
                       <span
                         class="badge-pill {getTicketVariant(ticket.status)}"
                       >
-                        {formatBadgeLabel(ticket.status_label || ticket.status)}
+                        {getTicketStatusText(ticket)}
                       </span>
                     </td>
                     <td class="td-right">
                       <button
                         type="button"
-                        onclick={() =>
-                          navigateHash(
-                            `/tenant/damage-reports/${encodeURIComponent(ticket.id ?? ticket.ticket_number ?? "")}`,
-                          )}
+                        onclick={() => openTicketDetail(ticket)}
                         class="btn-outline-sm"
                       >
                         Buka
@@ -529,6 +639,38 @@
                 {/each}
               </tbody>
             </table>
+          </div>
+
+          <div class="mobile-ticket-list">
+            {#each activeTickets as ticket (ticket.id ?? ticket.ticket_number ?? ticket.code)}
+              <button
+                type="button"
+                onclick={() => openTicketDetail(ticket)}
+                class="mobile-ticket-card-btn"
+              >
+                <div class="mobile-ticket-top">
+                  <div>
+                    <p class="mobile-ticket-code">
+                      {ticket.ticket_number ||
+                        (ticket.id ? `#${ticket.id}` : ticket.code || "-")}
+                    </p>
+                    <p class="mobile-ticket-cat">
+                      {ticket.category || ticket.title || "-"}
+                    </p>
+                  </div>
+                  <span class="badge-pill {getTicketVariant(ticket.status)}">
+                    {getTicketStatusText(ticket)}
+                  </span>
+                </div>
+                <div class="mobile-ticket-bottom">
+                  <span class="mobile-ticket-date">
+                    {ticket.reported_date_label ||
+                      formatTanggal(ticket.created_at || ticket.reported_at)}
+                  </span>
+                  <span class="mobile-ticket-open-label">Buka →</span>
+                </div>
+              </button>
+            {/each}
           </div>
         {/if}
       </div>
@@ -678,7 +820,8 @@
     box-sizing: border-box;
   }
 
-  .mobile-action-only {
+  .mobile-action-only,
+  .mobile-ticket-list {
     display: none;
   }
 
@@ -811,9 +954,9 @@
     display: inline-flex;
     align-items: center;
     border-radius: 999px;
-    padding: 2px 9px;
-    font-size: 10.5px;
-    font-weight: 500;
+    padding: 3px 10px;
+    font-size: 11px;
+    font-weight: 600;
     white-space: nowrap;
   }
 
@@ -821,26 +964,40 @@
     border-radius: 6px;
     background-color: #fff4cc;
     color: #8c6d1f;
+    font-size: 10.5px;
+    font-weight: 500;
+    padding: 2px 9px;
   }
 
   .badge-urgent {
     background-color: #fdecec;
     color: #c94a4a;
+    font-size: 10.5px;
+    font-weight: 500;
+    padding: 2px 9px;
   }
 
   .badge-routine {
     background-color: #f3ece4;
     color: #8a7968;
+    font-size: 10.5px;
+    font-weight: 500;
+    padding: 2px 9px;
   }
 
-  .badge-processing {
-    background-color: #fff5d6;
-    color: #9a7418;
+  .ticket-status-pending {
+    background-color: #fef3c7;
+    color: #b45309;
   }
 
-  .badge-done {
-    background-color: #e6f6ec;
-    color: #237a4b;
+  .ticket-status-processing {
+    background-color: #dbeafe;
+    color: #1d4ed8;
+  }
+
+  .ticket-status-done {
+    background-color: #dcfce7;
+    color: #15803d;
   }
 
   .tenant-muted,
@@ -898,6 +1055,73 @@
   }
 
   @media (max-width: 768px) {
+    .desktop-ticket-table-wrap {
+      display: none;
+    }
+
+    .mobile-ticket-list {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    .mobile-ticket-card-btn {
+      display: block;
+      width: 100%;
+      text-align: left;
+      padding: 12px 14px;
+      border: 1px solid #ece3d9;
+      border-radius: 10px;
+      background-color: #fcfaf7;
+      font-family: inherit;
+      cursor: pointer;
+      box-sizing: border-box;
+    }
+
+    .mobile-ticket-card-btn:hover {
+      background-color: #f6f0e8;
+    }
+
+    .mobile-ticket-top {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 10px;
+      margin-bottom: 8px;
+    }
+
+    .mobile-ticket-code {
+      margin: 0 0 2px;
+      font-size: 12px;
+      font-weight: 700;
+      color: #231f1e;
+    }
+
+    .mobile-ticket-cat {
+      margin: 0;
+      font-size: 12px;
+      font-weight: 500;
+      color: #3b2e25;
+    }
+
+    .mobile-ticket-bottom {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+    }
+
+    .mobile-ticket-date {
+      font-size: 11px;
+      color: #8e7e6e;
+    }
+
+    .mobile-ticket-open-label {
+      font-size: 11.5px;
+      font-weight: 600;
+      color: #5a3e28;
+    }
+
     .tenant-greeting {
       font-size: 24px;
     }

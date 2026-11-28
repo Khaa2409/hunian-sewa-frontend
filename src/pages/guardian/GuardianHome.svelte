@@ -73,20 +73,26 @@
   });
 
   let rawDueDateValue = $derived.by(() => {
-    return activeOpenInvoice?.due_date || activeWard?.nextDueDate || "";
+    return (
+      activeOpenInvoice?.due_date ||
+      activeOpenInvoice?.next_due_date ||
+      activeWard?.nextDueDate ||
+      ""
+    );
   });
 
   let isEmptyDueDate = $derived(!rawDueDateValue);
 
-  let hasUnpaidBill = $derived.by(() => {
-    if (!rawDueDateValue && !activeOpenInvoice) return false;
-    if (activeOpenInvoice) {
-      if (activeOpenInvoice.has_unpaid !== undefined) {
-        return Boolean(activeOpenInvoice.has_unpaid);
+  /**
+   * @param {any} inv
+   * @returns {boolean}
+   */
+  function checkInvoiceUnpaid(inv) {
+    if (inv && typeof inv === "object") {
+      if (inv.has_unpaid !== undefined) {
+        return Boolean(inv.has_unpaid);
       }
-      const status = String(
-        activeOpenInvoice.status || activeOpenInvoice.payment_status || "",
-      )
+      const status = String(inv.status || inv.payment_status || "")
         .trim()
         .toLowerCase();
       if (
@@ -97,25 +103,55 @@
           "settlement",
           "capture",
           "completed",
+          "success",
+          "cancelled",
+          "canceled",
+          "dibatalkan",
         ].includes(status)
       ) {
         return false;
       }
+      if (
+        [
+          "unpaid",
+          "pending",
+          "overdue",
+          "late",
+          "terlambat",
+          "menunggu pembayaran",
+        ].includes(status)
+      ) {
+        return true;
+      }
       const amt = Number(
-        String(
-          activeOpenInvoice.amount ??
-            activeOpenInvoice.total_amount ??
-            activeOpenInvoice.gross_amount ??
-            0,
-        ).replace(/[^\d.-]/g, ""),
+        String(inv.amount ?? inv.total_amount ?? inv.gross_amount ?? 0).replace(
+          /[^\d.-]/g,
+          "",
+        ),
       );
       if (Number.isFinite(amt) && amt > 0) return true;
     }
-    return Boolean(rawDueDateValue);
+    return false;
+  }
+
+  /**
+   * @param {WardItem | null | undefined} ward
+   * @returns {boolean}
+   */
+  function wardHasUnpaidBill(ward) {
+    if (!ward) return false;
+    return checkInvoiceUnpaid(ward.openInvoice);
+  }
+
+  let hasUnpaidBill = $derived.by(() => {
+    return checkInvoiceUnpaid(activeOpenInvoice);
   });
 
   let billTitle = $derived.by(() => {
-    if (activeOpenInvoice?.title || activeOpenInvoice?.period_label) {
+    if (
+      hasUnpaidBill &&
+      (activeOpenInvoice?.title || activeOpenInvoice?.period_label)
+    ) {
       return String(activeOpenInvoice.title || activeOpenInvoice.period_label);
     }
     return "Tagihan";
@@ -273,6 +309,74 @@
   }
 
   /**
+   * @param {number} year
+   * @param {number} month1Based
+   * @returns {string}
+   */
+  function formatMonthYear(year, month1Based) {
+    const d = new Date(year, (month1Based || 1) - 1, 1);
+    if (Number.isNaN(d.getTime())) return "–";
+    return d.toLocaleDateString("id-ID", {
+      month: "long",
+      year: "numeric",
+    });
+  }
+
+  /**
+   * @param {any} raw
+   * @returns {string}
+   */
+  function extractPaymentPeriodLabel(raw) {
+    if (!raw || typeof raw !== "object") return "–";
+    if (raw?.period_label && String(raw.period_label).trim()) {
+      return String(raw.period_label).trim();
+    }
+
+    const periodRaw = String(
+      raw?.periode ||
+        raw?.period ||
+        raw?.month_label ||
+        raw?.billing_period ||
+        "",
+    ).trim();
+
+    if (/^\d{4}-\d{2}$/.test(periodRaw)) {
+      const [y, m] = periodRaw.split("-").map(Number);
+      return formatMonthYear(y, m);
+    }
+
+    if (periodRaw) return periodRaw;
+
+    const dateCandidate =
+      raw?.period_start ||
+      raw?.due_date ||
+      raw?.billing_date ||
+      raw?.created_at ||
+      "";
+
+    if (dateCandidate) {
+      const isoMatch = String(dateCandidate).match(/^(\d{4})-(\d{2})/);
+      if (isoMatch) {
+        return formatMonthYear(Number(isoMatch[1]), Number(isoMatch[2]));
+      }
+      const parsed = new Date(dateCandidate);
+      if (!Number.isNaN(parsed.getTime())) {
+        return formatMonthYear(parsed.getFullYear(), parsed.getMonth() + 1);
+      }
+    }
+
+    const invNum = String(
+      raw?.invoice_number || raw?.invoice_code || raw?.number || "",
+    );
+    const invMatch = invNum.match(/(\d{4})(0[1-9]|1[0-2])-/);
+    if (invMatch) {
+      return formatMonthYear(Number(invMatch[1]), Number(invMatch[2]));
+    }
+
+    return "–";
+  }
+
+  /**
    * @param {any} raw
    * @param {number} idx
    * @returns {AnnouncementItem}
@@ -313,28 +417,9 @@
    * @returns {PaymentHistoryItem}
    */
   function normalizePayment(raw, idx) {
-    const periodRaw = String(
-      raw?.period_label ||
-        raw?.period ||
-        raw?.periode ||
-        raw?.month_label ||
-        "",
-    ).trim();
-    let periodFormatted = periodRaw || "–";
-    if (/^\d{4}-\d{2}$/.test(periodRaw)) {
-      const [y, m] = periodRaw.split("-").map(Number);
-      const d = new Date(y, (m || 1) - 1, 1);
-      if (!Number.isNaN(d.getTime())) {
-        periodFormatted = d.toLocaleDateString("id-ID", {
-          month: "long",
-          year: "numeric",
-        });
-      }
-    }
-
     return {
       id: raw?.id ?? idx + 1,
-      period: periodFormatted,
+      period: extractPaymentPeriodLabel(raw),
       amount:
         raw?.amount_rupiah ||
         formatRupiah(
@@ -422,6 +507,28 @@
                 String(item?.contract_id ?? "") === String(ward.contractId),
             )
           : rawInvoices;
+
+      if (ward && !ward.openInvoice) {
+        const unpaidForWard = filteredByWard.find(
+          (/** @type {any} */ item) =>
+            !isPaidInvoiceItem(item) && checkInvoiceUnpaid(item),
+        );
+        if (unpaidForWard) {
+          wards = wards.map((w) =>
+            String(w.id) === String(ward.id)
+              ? {
+                  ...w,
+                  openInvoice: unpaidForWard,
+                  nextDueDate:
+                    w.nextDueDate ||
+                    unpaidForWard.due_date ||
+                    unpaidForWard.next_due_date ||
+                    "",
+                }
+              : w,
+          );
+        }
+      }
 
       const paidRows = filteredByWard.filter(isPaidInvoiceItem);
       paymentHistory = paidRows.slice(0, 3).map(normalizePayment);
@@ -532,7 +639,11 @@
             disabled={loading}
           >
             {#each wards as ward (ward.id)}
-              <option value={ward.id}>Penyewa: {ward.name}</option>
+              <option value={ward.id}>
+                Penyewa: {ward.name}{wardHasUnpaidBill(ward)
+                  ? " (Belum Bayar)"
+                  : ""}
+              </option>
             {/each}
           </select>
         </div>
@@ -562,9 +673,11 @@
           disabled={loading}
         >
           {#each wards as ward (ward.id)}
-            <option value={ward.id}
-              >{ward.name} · Kamar {ward.roomNumber}</option
-            >
+            <option value={ward.id}>
+              {ward.name} · Kamar {ward.roomNumber}{wardHasUnpaidBill(ward)
+                ? " · Belum Bayar"
+                : ""}
+            </option>
           {/each}
         </select>
       {/if}
@@ -584,7 +697,7 @@
       <section class="surface-card due-card" aria-label="Pengingat Jatuh Tempo">
         <div class="due-card-top">
           <span class="due-heading">Pengingat Jatuh Tempo</span>
-          {#if hasUnpaidBill && dueBadgeText}
+          {#if dueBadgeText}
             <span class="due-badge">{dueBadgeText}</span>
           {/if}
         </div>
@@ -598,13 +711,15 @@
         </div>
 
         <div class="due-actions">
-          <button
-            type="button"
-            class="btn-brown-sm"
-            onclick={() => goToPath("#/guardian/bills-payments")}
-          >
-            Bayar Sewa
-          </button>
+          {#if hasUnpaidBill}
+            <button
+              type="button"
+              class="btn-brown-sm"
+              onclick={() => goToPath("#/guardian/bills-payments")}
+            >
+              Bayar Sewa
+            </button>
+          {/if}
           <button
             type="button"
             class="btn-link-muted"
@@ -623,14 +738,14 @@
             class="btn-brown-full"
             onclick={() => goToPath("#/guardian/bills-payments")}
           >
-            Bayar Sewa
+            Lihat Riwayat Pembayaran
           </button>
           <button
             type="button"
             class="btn-outline-full"
-            onclick={() => goToPath("#/guardian/bills-payments")}
+            onclick={() => goToPath("#/guardian/announcements")}
           >
-            Lihat Riwayat Pembayaran
+            Lihat Pengumuman
           </button>
         </div>
       </section>
@@ -644,22 +759,24 @@
       >
         <div class="mobile-bill-top">
           <span class="mobile-bill-sub">{mobileBillTitle}</span>
-          {#if hasUnpaidBill && mobileDueBadgeText}
+          {#if mobileDueBadgeText}
             <span class="due-badge">{mobileDueBadgeText}</span>
           {/if}
         </div>
 
         <div class="mobile-bill-amount">
-          {loading ? "Memuat..." : billAmountText}
+          {loading ? "Memuat..." : hasUnpaidBill ? billAmountText : dueDateText}
         </div>
 
-        <button
-          type="button"
-          class="btn-brown-full"
-          onclick={() => goToPath("#/guardian/bills-payments")}
-        >
-          Bayar Sewa
-        </button>
+        {#if hasUnpaidBill}
+          <button
+            type="button"
+            class="btn-brown-full"
+            onclick={() => goToPath("#/guardian/bills-payments")}
+          >
+            Bayar Sewa
+          </button>
+        {/if}
       </section>
 
       <section class="surface-card mobile-quick-card" aria-label="Aksi Cepat">
@@ -756,7 +873,7 @@
       {:else if paymentHistory.length === 0}
         <div class="empty-msg">Belum ada riwayat pembayaran.</div>
       {:else}
-        <div class="table-wrap">
+        <div class="table-wrap desktop-only">
           <table class="history-table">
             <thead>
               <tr>
@@ -779,6 +896,21 @@
               {/each}
             </tbody>
           </table>
+        </div>
+
+        <div class="mobile-only mobile-pay-list">
+          {#each paymentHistory as row (row.id)}
+            <div class="mobile-pay-card">
+              <div class="mobile-pay-top">
+                <span class="mobile-pay-period">{row.period}</span>
+                <span class="status-paid">{row.statusLabel}</span>
+              </div>
+              <div class="mobile-pay-meta">
+                <span class="mobile-pay-amount">{row.amount}</span>
+                <span class="mobile-pay-date">{row.paidDate}</span>
+              </div>
+            </div>
+          {/each}
         </div>
       {/if}
     </section>
@@ -1252,6 +1384,51 @@
     .announcement-sub {
       font-size: 11px;
       color: #9e8b7c;
+    }
+
+    .mobile-pay-list {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    .mobile-pay-card {
+      padding: 12px;
+      border: 1px solid #f0e8df;
+      border-radius: 10px;
+      background-color: #faf7f2;
+    }
+
+    .mobile-pay-top {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      margin-bottom: 6px;
+    }
+
+    .mobile-pay-period {
+      font-size: 12.5px;
+      font-weight: 700;
+      color: #261a14;
+    }
+
+    .mobile-pay-meta {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      font-size: 12px;
+    }
+
+    .mobile-pay-amount {
+      font-weight: 600;
+      color: #261a14;
+    }
+
+    .mobile-pay-date {
+      font-size: 11px;
+      color: #8f7c6e;
     }
   }
 </style>

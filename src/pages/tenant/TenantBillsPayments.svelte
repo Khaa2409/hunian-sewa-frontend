@@ -5,7 +5,11 @@
   import { fade, fly } from "svelte/transition";
   import DashboardLayout from "../../layouts/DashboardLayout.svelte";
   import { apiRequest } from "../../services/api.js";
-  import { loadSnap, consumeSnapReturnStatus, snapReturnMessage } from "../../lib/midtrans.js";
+  import {
+    loadSnap,
+    consumeSnapReturnStatus,
+    snapReturnMessage,
+  } from "../../lib/midtrans.js";
   import { currentUser } from "../../stores/auth.js";
 
   /** @type {Record<string, any> | null} */
@@ -82,7 +86,10 @@
     const rawPeriod = String(item?.periode || item?.period || "").trim();
     if (/^\d{4}-\d{2}$/.test(rawPeriod)) return rawPeriod;
     const rawDate =
-      item?.period_start || item?.due_date || item?.billing_date || item?.created_at;
+      item?.period_start ||
+      item?.due_date ||
+      item?.billing_date ||
+      item?.created_at;
     if (!rawDate) return "";
     const match = String(rawDate).match(/^(\d{4})-(\d{2})/);
     return match ? `${match[1]}-${match[2]}` : "";
@@ -128,7 +135,10 @@
     }
     if (rawPeriod) return rawPeriod;
     const rawDate =
-      item?.period_start || item?.due_date || item?.billing_date || item?.created_at;
+      item?.period_start ||
+      item?.due_date ||
+      item?.billing_date ||
+      item?.created_at;
     if (!rawDate) return "-";
     const match = String(rawDate).match(/^(\d{4})-(\d{2})/);
     if (match) {
@@ -257,14 +267,21 @@
   let periodOptions = $derived.by(() => {
     /** @type {Map<string, string>} */
     const map = new Map();
-    const add = (/** @type {Record<string, any> | null | undefined} */ item) => {
+    /**
+     * @param {Record<string, any>} item
+     */
+    const add = (item) => {
       const key = getPeriodKey(item);
       const label = getPeriodLabel(item);
       if (key && label && label !== "-") map.set(key, label);
     };
-    add(activeBill);
-    for (const inv of periodSourceInvoices) add(inv);
-    for (const inv of invoices) add(inv);
+    if (activeBill) add(activeBill);
+    for (const inv of periodSourceInvoices) {
+      if (inv) add(inv);
+    }
+    for (const inv of invoices) {
+      if (inv) add(inv);
+    }
     return Array.from(map.entries()).map(([value, label]) => ({
       value,
       label,
@@ -305,7 +322,9 @@
   // Ambil seluruh periode milik penyewa agar opsi dropdown tidak ikut tersaring
   async function fetchPeriodOptions() {
     try {
-      const res = await apiRequest("/api/invoices?limit=100", { method: "GET" });
+      const res = await apiRequest("/api/invoices?limit=100", {
+        method: "GET",
+      });
       /** @type {any} */
       const val = res;
       periodSourceInvoices = Array.isArray(val?.data)
@@ -522,6 +541,7 @@
   {#if viewMode === "checkout" && selectedInvoice}
     {@const billStatus = normalizeInvoiceStatus(selectedInvoice)}
     {@const totalAmt = getAmountValue(selectedInvoice)}
+    {@const canPayInvoice = isUnpaidInvoice(selectedInvoice)}
     <div in:fly={{ y: 14, duration: 220 }} class="page-stack">
       <div class="checkout-head-block">
         <h1 class="page-title">
@@ -611,16 +631,16 @@
             </span>
           </div>
 
-          <div class="checkout-actions">
-            <button
-              type="button"
-              class="btn-outline checkout-cancel-btn"
-              onclick={backToBillingList}
-              disabled={isInitiatingPayment}
-            >
-              Batal
-            </button>
-            {#if isUnpaidInvoice(selectedInvoice)}
+          {#if canPayInvoice}
+            <div class="checkout-actions">
+              <button
+                type="button"
+                class="btn-outline checkout-cancel-btn"
+                onclick={backToBillingList}
+                disabled={isInitiatingPayment}
+              >
+                Batal
+              </button>
               <button
                 type="button"
                 class="btn-brown checkout-pay-btn"
@@ -636,8 +656,8 @@
                     : `Bayar Sekarang · ${formatRupiah(totalAmt)}`}
                 </span>
               </button>
-            {/if}
-          </div>
+            </div>
+          {/if}
         </aside>
       </div>
     </div>

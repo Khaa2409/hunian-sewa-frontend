@@ -5,7 +5,11 @@
   import { fade, fly } from "svelte/transition";
   import DashboardLayout from "../../layouts/DashboardLayout.svelte";
   import { apiRequest } from "../../services/api.js";
-  import { loadSnap, consumeSnapReturnStatus, snapReturnMessage } from "../../lib/midtrans.js";
+  import {
+    loadSnap,
+    consumeSnapReturnStatus,
+    snapReturnMessage,
+  } from "../../lib/midtrans.js";
   import { currentUser } from "../../stores/auth.js";
 
   /**
@@ -106,16 +110,18 @@
   }
 
   /**
-   * @param {Record<string, any>} item
+   * @param {Record<string, any> | null | undefined} item
    */
   function getInvoiceId(item) {
+    if (!item || typeof item !== "object") return "";
     return item?.id ?? item?.invoice_id ?? "";
   }
 
   /**
-   * @param {Record<string, any>} item
+   * @param {Record<string, any> | null | undefined} item
    */
   function getInvoiceNumber(item) {
+    if (!item || typeof item !== "object") return "-";
     return (
       item?.invoice_number ||
       item?.invoice_code ||
@@ -126,9 +132,10 @@
   }
 
   /**
-   * @param {Record<string, any>} item
+   * @param {Record<string, any> | null | undefined} item
    */
   function getPeriodLabel(item) {
+    if (!item || typeof item !== "object") return "-";
     if (item?.period_label) return String(item.period_label);
     const rawPeriod = String(
       item?.periode || item?.period || item?.billing_period || "",
@@ -145,7 +152,10 @@
     }
     if (rawPeriod) return rawPeriod;
     const rawDate =
-      item?.period_start || item?.due_date || item?.billing_date || item?.created_at;
+      item?.period_start ||
+      item?.due_date ||
+      item?.billing_date ||
+      item?.created_at;
     if (!rawDate) return "-";
     const match = String(rawDate).match(/^(\d{4})-(\d{2})/);
     if (match) {
@@ -166,13 +176,17 @@
   }
 
   /**
-   * @param {Record<string, any>} item
+   * @param {Record<string, any> | null | undefined} item
    */
   function getPeriodKey(item) {
+    if (!item || typeof item !== "object") return "";
     const rawPeriod = String(item?.periode || item?.period || "").trim();
     if (/^\d{4}-\d{2}$/.test(rawPeriod)) return rawPeriod;
     const rawDate =
-      item?.period_start || item?.due_date || item?.billing_date || item?.created_at;
+      item?.period_start ||
+      item?.due_date ||
+      item?.billing_date ||
+      item?.created_at;
     if (!rawDate) return "";
     const match = String(rawDate).match(/^(\d{4})-(\d{2})/);
     if (match) return `${match[1]}-${match[2]}`;
@@ -184,9 +198,12 @@
   }
 
   /**
-   * @param {Record<string, any>} item
+   * @param {Record<string, any> | null | undefined} item
    */
   function getRoomNumber(item) {
+    if (!item || typeof item !== "object") {
+      return activeWard?.roomNumber || "-";
+    }
     return (
       item?.room_number ||
       item?.room_code ||
@@ -198,9 +215,12 @@
   }
 
   /**
-   * @param {Record<string, any>} item
+   * @param {Record<string, any> | null | undefined} item
    */
   function getTenantName(item) {
+    if (!item || typeof item !== "object") {
+      return activeWard?.name || "Penyewa";
+    }
     return (
       item?.tenant_name ||
       item?.user_name ||
@@ -211,9 +231,10 @@
   }
 
   /**
-   * @param {Record<string, any>} item
+   * @param {Record<string, any> | null | undefined} item
    */
   function getAmountValue(item) {
+    if (!item || typeof item !== "object") return 0;
     const val =
       item?.total_amount ??
       item?.amount ??
@@ -225,10 +246,11 @@
   }
 
   /**
-   * @param {Record<string, any>} item
+   * @param {Record<string, any> | null | undefined} item
    * @returns {'paid' | 'unpaid' | 'overdue'}
    */
   function normalizeInvoiceStatus(item) {
+    if (!item || typeof item !== "object") return "unpaid";
     const raw = String(item?.status || item?.payment_status || "")
       .trim()
       .toLowerCase();
@@ -238,7 +260,9 @@
       raw === "lunas" ||
       raw === "settlement" ||
       raw === "capture" ||
-      raw === "completed"
+      raw === "completed" ||
+      raw === "success" ||
+      Boolean(item?.paid_at || item?.payment_date)
     ) {
       return "paid";
     }
@@ -264,9 +288,10 @@
   }
 
   /**
-   * @param {Record<string, any>} item
+   * @param {Record<string, any> | null | undefined} item
    */
   function getInvoiceStatusLabel(item) {
+    if (!item || typeof item !== "object") return "Menunggu Pembayaran";
     if (item?.status_label && String(item.status_label).trim()) {
       return String(item.status_label).trim();
     }
@@ -309,13 +334,55 @@
 
   /**
    * @param {Record<string, any>} inv
+   * @param {GuardianWard | null} [wardTarget]
+   */
+  function isInvoiceOfWard(inv, wardTarget = activeWard) {
+    if (!wardTarget) return true;
+    const invTenant = inv?.tenant_id ?? inv?.tenant?.id ?? null;
+    if (
+      wardTarget.tenantId !== null &&
+      wardTarget.tenantId !== undefined &&
+      invTenant !== null &&
+      invTenant !== undefined
+    ) {
+      return String(invTenant) === String(wardTarget.tenantId);
+    }
+    const invContract = inv?.contract_id ?? inv?.contract?.id ?? null;
+    if (
+      wardTarget.contractId !== null &&
+      wardTarget.contractId !== undefined &&
+      invContract !== null &&
+      invContract !== undefined
+    ) {
+      return String(invContract) === String(wardTarget.contractId);
+    }
+    return true;
+  }
+
+  /**
+   * @param {Record<string, any>} inv
    */
   function isInvoiceOfActiveWard(inv) {
-    if (!activeWard?.tenantId) return true;
-    const invTenant = inv?.tenant_id ?? inv?.tenant?.id ?? null;
-    return (
-      invTenant === null || String(invTenant) === String(activeWard.tenantId)
-    );
+    return isInvoiceOfWard(inv, activeWard);
+  }
+
+  /**
+   * @param {Array<Record<string, any>>} allRows
+   * @param {GuardianWard | null} wardTarget
+   * @param {Record<string, any> | null} explicitActive
+   */
+  function resolveActiveBillForWard(allRows, wardTarget, explicitActive) {
+    const wardList = allRows.filter((inv) => isInvoiceOfWard(inv, wardTarget));
+    const unpaidWardBill = wardList.find((inv) => isUnpaidInvoice(inv));
+    if (unpaidWardBill) return unpaidWardBill;
+    if (
+      explicitActive &&
+      isInvoiceOfWard(explicitActive, wardTarget) &&
+      isUnpaidInvoice(explicitActive)
+    ) {
+      return explicitActive;
+    }
+    return null;
   }
 
   let wardInvoices = $derived(invoices.filter(isInvoiceOfActiveWard));
@@ -329,9 +396,7 @@
   });
 
   let totalCount = $derived(periodFilteredInvoices.length);
-  let totalPages = $derived(
-    Math.max(1, Math.ceil(totalCount / perPage)),
-  );
+  let totalPages = $derived(Math.max(1, Math.ceil(totalCount / perPage)));
 
   let filteredInvoices = $derived(
     periodFilteredInvoices.slice(
@@ -372,6 +437,7 @@
 
   function backToBillingList() {
     viewMode = "list";
+    selectedInvoice = null;
     checkoutError = "";
     fetchBillingData();
   }
@@ -395,10 +461,9 @@
 
     do {
       /** @type {any} */
-      const val = await apiRequest(
-        `/api/invoices?page=${page}&limit=100`,
-        { method: "GET" },
-      );
+      const val = await apiRequest(`/api/invoices?page=${page}&limit=100`, {
+        method: "GET",
+      });
       const list = Array.isArray(val?.data)
         ? val.data
         : Array.isArray(val?.invoices)
@@ -452,18 +517,32 @@
         }
       }
 
+      const currentWardObj =
+        wards.find((w) => String(w.id) === String(selectedWardId)) ||
+        wards[0] ||
+        null;
+
       if (invoicesRes.status === "fulfilled") {
         const result = invoicesRes.value;
         invoices = result.rows;
         if (currentPage > totalPages) currentPage = totalPages;
 
-        const wardFilteredList = invoices.filter(isInvoiceOfActiveWard);
-        activeBill =
-          result.explicitActive ||
-          wardFilteredList.find((/** @type {any} */ inv) =>
-            isUnpaidInvoice(inv),
-          ) ||
-          null;
+        activeBill = resolveActiveBillForWard(
+          invoices,
+          currentWardObj,
+          result.explicitActive,
+        );
+
+        if (selectedInvoice) {
+          const updatedSelected = invoices.find(
+            (inv) =>
+              String(getInvoiceId(inv)) ===
+              String(getInvoiceId(selectedInvoice)),
+          );
+          if (updatedSelected) {
+            selectedInvoice = updatedSelected;
+          }
+        }
       } else {
         const reason = /** @type {any} */ (invoicesRes.reason);
         invoices = [];
@@ -516,6 +595,7 @@
         onSuccess: async () => {
           notifyFeedback("Pembayaran berhasil diproses.");
           viewMode = "list";
+          selectedInvoice = null;
           await fetchBillingData();
         },
         onPending: async () => {
@@ -523,6 +603,7 @@
             "Pembayaran tertunda. Menyinkronkan status tagihan...",
           );
           viewMode = "list";
+          selectedInvoice = null;
           await fetchBillingData();
         },
         onError: () => {
@@ -542,6 +623,7 @@
 
     notifyFeedback("Transaksi pembayaran telah dibuat.");
     viewMode = "list";
+    selectedInvoice = null;
     await fetchBillingData();
   }
 
@@ -584,12 +666,16 @@
   function handleWardSelectChange() {
     currentPage = 1;
     selectedPeriod = "all";
-    const list = wardInvoices;
-    activeBill =
-      list.find((/** @type {Record<string, any>} */ inv) =>
-        isUnpaidInvoice(inv),
-      ) ||
+    selectedInvoice = null;
+    checkoutError = "";
+    viewMode = "list";
+
+    const nextWard =
+      wards.find((w) => String(w.id) === String(selectedWardId)) ||
+      wards[0] ||
       null;
+
+    activeBill = resolveActiveBillForWard(invoices, nextWard, null);
   }
 
   function handlePeriodSelectChange() {
@@ -629,6 +715,7 @@
   {#if viewMode === "checkout" && selectedInvoice}
     {@const billStatus = normalizeInvoiceStatus(selectedInvoice)}
     {@const totalAmt = getAmountValue(selectedInvoice)}
+    {@const canPayInvoice = isUnpaidInvoice(selectedInvoice)}
     <div in:fly={{ y: 14, duration: 220 }} class="page-stack">
       <div class="checkout-head-block">
         <h1 class="page-title">
@@ -718,16 +805,16 @@
             </span>
           </div>
 
-          <div class="checkout-actions">
-            <button
-              type="button"
-              class="btn-outline checkout-cancel-btn"
-              onclick={backToBillingList}
-              disabled={isInitiatingPayment}
-            >
-              Batal
-            </button>
-            {#if isUnpaidInvoice(selectedInvoice)}
+          {#if canPayInvoice}
+            <div class="checkout-actions">
+              <button
+                type="button"
+                class="btn-outline checkout-cancel-btn"
+                onclick={backToBillingList}
+                disabled={isInitiatingPayment}
+              >
+                Batal
+              </button>
               <button
                 type="button"
                 class="btn-brown checkout-pay-btn"
@@ -743,8 +830,8 @@
                     : `Bayar Sekarang · ${formatRupiah(totalAmt)}`}
                 </span>
               </button>
-            {/if}
-          </div>
+            </div>
+          {/if}
         </aside>
       </div>
     </div>
@@ -804,7 +891,7 @@
               <h2 class="card-section-title">
                 <span class="desktop-only-inline">Ringkasan Pembayaran</span>
                 <span class="mobile-only-inline">
-                  Tagihan {getPeriodLabel(activeBill || {})}
+                  Tagihan {getPeriodLabel(activeBill)}
                 </span>
               </h2>
               {#if activeBill && getTenantName(activeBill) !== "-"}

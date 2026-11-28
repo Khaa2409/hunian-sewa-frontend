@@ -9,6 +9,9 @@
   import { getToken } from "../../services/token.js";
   import { currentUser } from "../../stores/auth.js";
 
+  const PENDING_TICKET_STORAGE_KEY = "hunify_tenant_open_ticket_id";
+  const PENDING_TICKET_DATA_KEY = "hunify_tenant_open_ticket_data";
+
   /** @type {Record<string, any> | null} */
   let profile = $state(null);
 
@@ -105,6 +108,55 @@
       return `T-${String(item.id).padStart(4, "0")}`;
     }
     return "-";
+  }
+
+  /**
+   * @param {Record<string, any> | null | undefined} item
+   */
+  function getRoomNumber(item) {
+    if (!item || typeof item !== "object") return "";
+    return String(
+      item.room_number ||
+        item.room?.room_number ||
+        item.room_name ||
+        item.room?.name ||
+        profile?.room_number ||
+        profile?.room?.room_number ||
+        "",
+    ).trim();
+  }
+
+  /**
+   * @param {Record<string, any> | null | undefined} item
+   */
+  function formatDetailHeaderTitle(item) {
+    if (!item || typeof item !== "object") return "Laporan Kerusakan";
+    const category = String(
+      item.category || item.subject || item.title || "",
+    ).trim();
+    const roomNum = getRoomNumber(item);
+
+    if (category && roomNum) {
+      const hasKendala = category.toLowerCase().startsWith("kendala");
+      const hasKamar = roomNum.toLowerCase().startsWith("kamar");
+      const prefix = hasKendala ? category : `Kendala ${category}`;
+      const suffix = hasKamar ? roomNum : `Kamar ${roomNum}`;
+      return `${prefix} ${suffix}`;
+    }
+
+    if (category) {
+      return category.toLowerCase().startsWith("kendala")
+        ? category
+        : `Kendala ${category}`;
+    }
+
+    if (roomNum) {
+      return roomNum.toLowerCase().startsWith("kamar")
+        ? `Laporan Kerusakan ${roomNum}`
+        : `Laporan Kerusakan Kamar ${roomNum}`;
+    }
+
+    return "Laporan Kerusakan";
   }
 
   /**
@@ -343,6 +395,7 @@
     };
   });
 
+  /** @type {Record<string, string>} */
   const USER_ROLE_LABELS = {
     owner: "Pemilik",
     caretaker: "Pengelola",
@@ -353,7 +406,7 @@
 
   let discussionItems = $derived.by(() => {
     const uid = get(currentUser)?.id;
-    return getDiscussionList(selectedReport).map((msg) => {
+    return getDiscussionList(selectedReport).map((msg, index) => {
       const roleRaw = String(
         msg?.user_role || msg?.role || msg?.role_label || "",
       ).toLowerCase();
@@ -367,6 +420,7 @@
         roleRaw === "penyewa";
       return {
         ...msg,
+        id: msg?.id ?? index,
         sender: [
           name,
           USER_ROLE_LABELS[roleRaw] || "",
@@ -383,7 +437,8 @@
   /**
    * @param {string} statusParamValue
    */
-  async function requestTickets(statusParamValue) {    const params = new URLSearchParams();
+  async function requestTickets(statusParamValue) {
+    const params = new URLSearchParams();
     params.set("page", String(currentPage));
     params.set("limit", String(perPage));
 
@@ -678,6 +733,36 @@
     }
   }
 
+  async function consumePendingTicketFromDashboard() {
+    if (typeof window === "undefined") return;
+
+    let pendingId = "";
+    /** @type {Record<string, any> | null} */
+    let pendingData = null;
+
+    try {
+      pendingId =
+        window.sessionStorage.getItem(PENDING_TICKET_STORAGE_KEY) || "";
+      const rawData = window.sessionStorage.getItem(PENDING_TICKET_DATA_KEY);
+      if (rawData) {
+        pendingData = JSON.parse(rawData);
+      }
+      window.sessionStorage.removeItem(PENDING_TICKET_STORAGE_KEY);
+      window.sessionStorage.removeItem(PENDING_TICKET_DATA_KEY);
+    } catch {
+      return;
+    }
+
+    if (!pendingId && !pendingData) return;
+
+    const matchedItem = reports.find(
+      (item) => String(getReportId(item)) === String(pendingId),
+    ) ||
+      pendingData || { id: pendingId };
+
+    await openReportDetail(matchedItem);
+  }
+
   /**
    * @param {SubmitEvent} e
    */
@@ -779,7 +864,11 @@
   onMount(() => {
     syncViewportState();
     window.addEventListener("resize", syncViewportState);
-    fetchReportsPage();
+
+    (async () => {
+      await fetchReportsPage();
+      await consumePendingTicketFromDashboard();
+    })();
 
     return () => {
       window.removeEventListener("resize", syncViewportState);
@@ -826,146 +915,143 @@
       <div class="detail-grid">
         <div class="dr-card">
           <div class="detail-top-row">
-              <span class="ticket-code-label">
-                {getTicketCode(selectedReport)}
-              </span>
-              <span class="status-pill {stKey}">
-                {getStatusLabel(stKey, selectedReport.status_label)}
-              </span>
-            </div>
-
-            <h1 class="detail-title">
-              {selectedReport.category ||
-                selectedReport.subject ||
-                "Laporan Kerusakan"}
-            </h1>
-
-            <p class="detail-meta-line">
-              Pelapor: {selectedReport.reporter_name ||
-                selectedReport.tenant_name ||
-                profile?.name ||
-                "-"} &middot; Kamar {selectedReport.room_number ||
-                selectedReport.room?.room_number ||
-                "-"} &middot; {formatTanggal(
-                selectedReport.created_at || selectedReport.reported_at,
-              )}
-            </p>
-
-            <div class="detail-meta-grid">
-              <div>
-                <span class="meta-lbl">Kategori</span>
-                <span class="meta-val">{selectedReport.category || "-"}</span>
-              </div>
-              <div>
-                <span class="meta-lbl">Tanggal Lapor</span>
-                <span class="meta-val"
-                  >{formatTanggal(
-                    selectedReport.created_at || selectedReport.reported_at,
-                  )}</span
-                >
-              </div>
-            </div>
-
-            <div class="detail-section-block">
-              <span class="meta-lbl">Deskripsi Masalah</span>
-              <p class="detail-desc-text">
-                {selectedReport.description || selectedReport.detail || "-"}
-              </p>
-            </div>
-
-            {#if photoUrl}
-              <div class="detail-section-block">
-                <span class="meta-lbl">Foto bukti kendala</span>
-                {#if photoBlobLoading}
-                  <p class="dr-muted">Memuat foto...</p>
-                {:else if photoObjectUrl}
-                  <button
-                    type="button"
-                    class="detail-photo-btn"
-                    onclick={openPhotoPreview}
-                    title="Klik untuk memperbesar foto"
-                    aria-label="Perbesar foto bukti kendala"
-                  >
-                    <img
-                      src={photoObjectUrl}
-                      alt="Foto bukti kerusakan"
-                      class="detail-photo-img"
-                    />
-                  </button>
-                {:else if photoBlobError}
-                  <p class="dr-muted">{photoBlobError}</p>
-                {/if}
-              </div>
-            {/if}
-
-            {#if techNote}
-              <div class="detail-section-block">
-                <span class="meta-lbl">Catatan teknis dari Pengelola</span>
-                <p class="detail-desc-text">{techNote}</p>
-              </div>
-            {/if}
-
-            {#if detailLoading}
-              <p class="dr-muted">Memperbarui detail tiket...</p>
-            {/if}
+            <span class="ticket-code-label">
+              {getTicketCode(selectedReport)}
+            </span>
+            <span class="status-pill {stKey}">
+              {getStatusLabel(stKey, selectedReport.status_label)}
+            </span>
           </div>
 
-          <section
-            class="dr-card detail-status-card"
-            aria-label="Status Penanganan"
-          >
-            <h2 class="section-heading">Status Penanganan</h2>
+          <h1 class="detail-title">
+            {formatDetailHeaderTitle(selectedReport)}
+          </h1>
 
-            <div class="side-kv">
-              <span class="meta-lbl">Status</span>
-              <span class="status-pill {stKey}">
-                {getStatusLabel(stKey, selectedReport.status_label)}
-              </span>
+          <p class="detail-meta-line">
+            Pelapor: {selectedReport.reporter_name ||
+              selectedReport.tenant_name ||
+              profile?.name ||
+              "-"} &middot; Kamar {getRoomNumber(selectedReport) || "-"} &middot;
+            {formatTanggal(
+              selectedReport.created_at || selectedReport.reported_at,
+            )}
+          </p>
+
+          <div class="detail-meta-grid">
+            <div>
+              <span class="meta-lbl">Kategori</span>
+              <span class="meta-val">{selectedReport.category || "-"}</span>
             </div>
-            {#if techNote}
-              <div class="side-note-box">
-                <span class="meta-lbl">Catatan teknis dari Pengelola</span>
-                <p class="detail-desc-text">{techNote}</p>
-              </div>
-            {/if}
-          </section>
-
-          <section class="detail-discussion-card" aria-label="Diskusi Tiket">
-            <h2 class="discussion-heading">Diskusi Tiket</h2>
-
-            {#if discussionItems.length === 0}
-              <p class="empty-discussion-text">
-                Belum ada pesan diskusi pada tiket ini.
-              </p>
-            {:else}
-              <div class="discussion-thread-box">
-                {#each discussionItems as msg, idx (msg?.id ?? idx)}
-                  <div class="chat-row {msg.align}">
-                    <span class="chat-sender">{msg.sender}</span>
-                    <div class="chat-bubble {msg.align}">{msg.text}</div>
-                  </div>
-                {/each}
-              </div>
-            {/if}
-
-            <form class="chat-reply-form" onsubmit={handleSendComment}>
-              <input
-                type="text"
-                class="chat-reply-input"
-                bind:value={commentInput}
-                placeholder="Tulis balasan untuk pengelola..."
-                aria-label="Tulis balasan untuk pengelola"
-                disabled={isSendingComment}
-              />
-              <button
-                type="submit"
-                class="btn-primary-brown chat-send-btn"
-                disabled={isSendingComment || !commentInput.trim()}
+            <div>
+              <span class="meta-lbl">Tanggal Lapor</span>
+              <span class="meta-val"
+                >{formatTanggal(
+                  selectedReport.created_at || selectedReport.reported_at,
+                )}</span
               >
-                {isSendingComment ? "Mengirim..." : "Kirim"}
-              </button>
-            </form>
-          </section>
+            </div>
+          </div>
+
+          <div class="detail-section-block">
+            <span class="meta-lbl">Deskripsi Masalah</span>
+            <p class="detail-desc-text">
+              {selectedReport.description || selectedReport.detail || "-"}
+            </p>
+          </div>
+
+          {#if photoUrl}
+            <div class="detail-section-block">
+              <span class="meta-lbl">Foto bukti kendala</span>
+              {#if photoBlobLoading}
+                <p class="dr-muted">Memuat foto...</p>
+              {:else if photoObjectUrl}
+                <button
+                  type="button"
+                  class="detail-photo-btn"
+                  onclick={openPhotoPreview}
+                  title="Klik untuk memperbesar foto"
+                  aria-label="Perbesar foto bukti kendala"
+                >
+                  <img
+                    src={photoObjectUrl}
+                    alt="Foto bukti kerusakan"
+                    class="detail-photo-img"
+                  />
+                </button>
+              {:else if photoBlobError}
+                <p class="dr-muted">{photoBlobError}</p>
+              {/if}
+            </div>
+          {/if}
+
+          {#if techNote}
+            <div class="detail-section-block">
+              <span class="meta-lbl">Catatan teknis dari Pengelola</span>
+              <p class="detail-desc-text">{techNote}</p>
+            </div>
+          {/if}
+
+          {#if detailLoading}
+            <p class="dr-muted">Memperbarui detail tiket...</p>
+          {/if}
+        </div>
+
+        <section
+          class="dr-card detail-status-card"
+          aria-label="Status Penanganan"
+        >
+          <h2 class="section-heading">Status Penanganan</h2>
+
+          <div class="side-kv">
+            <span class="meta-lbl">Status</span>
+            <span class="status-pill {stKey}">
+              {getStatusLabel(stKey, selectedReport.status_label)}
+            </span>
+          </div>
+          {#if techNote}
+            <div class="side-note-box">
+              <span class="meta-lbl">Catatan teknis dari Pengelola</span>
+              <p class="detail-desc-text">{techNote}</p>
+            </div>
+          {/if}
+        </section>
+
+        <section class="detail-discussion-card" aria-label="Diskusi Tiket">
+          <h2 class="discussion-heading">Diskusi Tiket</h2>
+
+          {#if discussionItems.length === 0}
+            <p class="empty-discussion-text">
+              Belum ada pesan diskusi pada tiket ini.
+            </p>
+          {:else}
+            <div class="discussion-thread-box">
+              {#each discussionItems as msg, idx (msg?.id ?? idx)}
+                <div class="chat-row {msg.align}">
+                  <span class="chat-sender">{msg.sender}</span>
+                  <div class="chat-bubble {msg.align}">{msg.text}</div>
+                </div>
+              {/each}
+            </div>
+          {/if}
+
+          <form class="chat-reply-form" onsubmit={handleSendComment}>
+            <input
+              type="text"
+              class="chat-reply-input"
+              bind:value={commentInput}
+              placeholder="Tulis balasan untuk pengelola..."
+              aria-label="Tulis balasan untuk pengelola"
+              disabled={isSendingComment}
+            />
+            <button
+              type="submit"
+              class="btn-primary-brown chat-send-btn"
+              disabled={isSendingComment || !commentInput.trim()}
+            >
+              {isSendingComment ? "Mengirim..." : "Kirim"}
+            </button>
+          </form>
+        </section>
       </div>
     </div>
 
@@ -1008,7 +1094,9 @@
             alt="Bukti kendala {getTicketCode(selectedReport)}"
             class="photo-full-img"
           />
-          <p class="photo-preview-caption">{selectedReport.description || "-"}</p>
+          <p class="photo-preview-caption">
+            {selectedReport.description || "-"}
+          </p>
           <span class="photo-preview-hint"
             >Dilaporkan pada {formatTanggal(
               selectedReport.created_at || selectedReport.reported_at,
@@ -1269,7 +1357,7 @@
                       {item.category || item.title || "Laporan Kerusakan"}
                     </h2>
                     <p class="mobile-dr-sub">
-                      Kamar {item.room_number || item.room?.room_number || "-"} &middot;
+                      Kamar {getRoomNumber(item) || "-"} &middot;
                       {getTicketCode(item)}
                     </p>
                   </div>
@@ -1759,7 +1847,11 @@
     margin: 0 0 6px;
     font-size: 20px;
     font-weight: 700;
-    color: #231f1e;
+    color: #261a14;
+    line-height: 1.3;
+    letter-spacing: 0;
+    word-spacing: 0.08em;
+    overflow-wrap: break-word;
   }
 
   .detail-meta-line {
@@ -2377,6 +2469,17 @@
     .detail-status-card {
       grid-column: auto;
       grid-row: auto;
+    }
+
+    .detail-title {
+      margin: 0 0 6px;
+      font-size: 18px;
+      font-weight: 700;
+      color: #261a14;
+      line-height: 1.35;
+      letter-spacing: 0;
+      word-spacing: 0.08em;
+      overflow-wrap: break-word;
     }
 
     .create-drawer {

@@ -713,7 +713,6 @@
               {/if}
             </button>
           {/if}
-
         </article>
 
         <section class="detail-status-card" aria-label="Status Penanganan">
@@ -2464,12 +2463,15 @@
       color: #a88f7a;
     }
 
-    .mobile-detail-heading {
-      margin: 0 0 4px;
-      font-size: 16px;
+    .mobile-detail-stack .mobile-detail-heading {
+      margin: 0 0 6px;
+      font-size: 18px;
       font-weight: 700;
       color: #261a14;
       line-height: 1.35;
+      letter-spacing: 0;
+      word-spacing: 0.08em;
+      overflow-wrap: break-word;
     }
 
     .mobile-detail-submeta {

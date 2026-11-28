@@ -918,8 +918,8 @@
           </div>
 
           <p class="discussion-footer-note">
-            Chat dikirim oleh penyewa dan pengelola; Pemilik hanya dapat
-            melihat chat.
+            Chat dikirim oleh penyewa dan pengelola; Pemilik hanya dapat melihat
+            chat.
           </p>
         </section>
       </div>
@@ -2335,12 +2335,15 @@
       color: #a88f7a;
     }
 
-    .mobile-detail-heading {
-      margin: 0 0 4px;
-      font-size: 16px;
+    .mobile-detail-stack .mobile-detail-heading {
+      margin: 0 0 6px;
+      font-size: 18px;
       font-weight: 700;
       color: #261a14;
       line-height: 1.35;
+      letter-spacing: 0;
+      word-spacing: 0.08em;
+      overflow-wrap: break-word;
     }
 
     .mobile-detail-submeta {
@@ -2388,6 +2391,5 @@
       font-size: 9px;
       color: #8f7b6b;
     }
-
   }
 </style>
